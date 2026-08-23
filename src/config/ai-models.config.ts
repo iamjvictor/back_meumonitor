@@ -1,0 +1,35 @@
+import { env } from './env.js';
+
+export const aiModels = {
+  questionExtraction: env.QUESTION_EXTRACTION_MODEL || env.OPENROUTER_QUESTION_MODEL,
+  questionExtractionMaxTokens: env.QUESTION_EXTRACTION_MAX_TOKENS,
+  questionExtractionTemperature: env.QUESTION_EXTRACTION_TEMPERATURE,
+  questionCompletion: env.QUESTION_COMPLETION_MODEL,
+  questionCompletionMaxTokens: env.QUESTION_COMPLETION_MAX_TOKENS,
+  questionCompletionTemperature: env.QUESTION_COMPLETION_TEMPERATURE,
+  questionCategorize: env.QUESTION_CATEGORIZE_MODEL || env.QUESTION_COMPLETION_MODEL,
+  questionCategorizeMaxTokens: env.QUESTION_CATEGORIZE_MAX_TOKENS,
+  questionCategorizeTemperature: env.QUESTION_CATEGORIZE_TEMPERATURE,
+  topicProfile: env.TOPIC_PROFILE_MODEL || env.QUESTION_CATEGORIZE_MODEL || env.QUESTION_COMPLETION_MODEL,
+  topicProfileMaxTokens: env.TOPIC_PROFILE_MAX_TOKENS,
+  topicProfileTemperature: env.TOPIC_PROFILE_TEMPERATURE,
+  questionAlternatives: env.QUESTION_ALTERNATIVES_MODEL || env.QUESTION_COMPLETION_MODEL,
+  questionAlternativesMaxTokens: env.QUESTION_ALTERNATIVES_MAX_TOKENS,
+  questionAlternativesTemperature: env.QUESTION_ALTERNATIVES_TEMPERATURE,
+  questionAnswer: env.QUESTION_ANSWER_MODEL || env.QUESTION_COMPLETION_MODEL,
+  questionAnswerMaxTokens: env.QUESTION_ANSWER_MAX_TOKENS,
+  questionAnswerTemperature: env.QUESTION_ANSWER_TEMPERATURE,
+  questionExplanation: env.QUESTION_EXPLANATION_MODEL || env.QUESTION_COMPLETION_MODEL,
+  questionExplanationMaxTokens: env.QUESTION_EXPLANATION_MAX_TOKENS,
+  questionExplanationTemperature: env.QUESTION_EXPLANATION_TEMPERATURE,
+  questionCompletionFallback: env.QUESTION_COMPLETION_FALLBACK_MODEL || null,
+  enablePaidStructuredFallback: env.ENABLE_PAID_STRUCTURED_FALLBACK === 'true',
+  blockTopicClassificationMaxTokens:
+    env.DOCUMENT_BLOCK_TOPIC_CLASSIFICATION_MAX_TOKENS || env.BLOCK_TOPIC_CLASSIFICATION_MAX_TOKENS,
+  blockTopicClassificationTemperature: env.DOCUMENT_BLOCK_TOPIC_CLASSIFICATION_TEMPERATURE,
+  blockTopicClassificationBatchSize: env.BLOCK_TOPIC_CLASSIFICATION_BATCH_SIZE,
+  embeddingBatchSize: env.EMBEDDING_BATCH_SIZE,
+  questionCandidateConcurrency: env.QUESTION_CANDIDATE_CONCURRENCY,
+  documentBlockTopicClassification:
+    env.DOCUMENT_BLOCK_TOPIC_CLASSIFICATION_MODEL || env.OPENROUTER_QUESTION_MODEL,
+} as const;

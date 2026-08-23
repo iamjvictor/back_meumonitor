@@ -1,0 +1,738 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Teacher {
+  id                    String                 @id @default(uuid()) @db.Uuid
+  userId                String                 @unique @map("user_id") @db.Uuid
+  fullName              String                 @map("full_name")
+  email                 String
+  phone                 String?
+  username              String                 @unique
+  area                  String
+  customArea            String?                @map("custom_area")
+  bio                   String?
+  pageSlug              String                 @unique @map("page_slug")
+  avatarUrl             String?                @map("avatar_url")
+  instagram             String?
+  tiktok                String?
+  youtube               String?
+  role                  String                 @default("teacher")
+  emailVerified         Boolean                @default(false) @map("email_verified")
+  status                String                 @default("pending")
+  termsAcceptedAt       DateTime               @map("terms_accepted_at")
+  createdAt             DateTime               @default(now()) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+  monitors              Monitor[]
+  documents             MonitorDocument[]
+  chunks                DocumentChunk[]
+  questions             Question[]
+  flashcards            Flashcard[]
+  questionAiGenerations QuestionAiGeneration[]
+  retrievalEvalCases    RetrievalEvalCase[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("teachers")
+}
+
+model Monitor {
+  id          String        @id @default(uuid()) @db.Uuid
+  teacherId   String        @map("teacher_id") @db.Uuid
+  name        String
+  description String?
+  status      MonitorStatus @default(DRAFT)
+  publishedAt DateTime?     @map("published_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  teacher            Teacher             @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  subjects           MonitorSubject[]
+  documents          MonitorDocument[]
+  chunks             DocumentChunk[]
+  questions          Question[]
+  flashcards         Flashcard[]
+  retrievalEvalCases RetrievalEvalCase[]
+
+  @@index([teacherId, status])
+  @@map("monitors")
+}
+
+model MonitorSubject {
+  id        String   @id @default(uuid()) @db.Uuid
+  monitorId String   @map("monitor_id") @db.Uuid
+  name      String
+  position  Int
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  monitor            Monitor             @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  topics             MonitorTopic[]
+  documents          MonitorDocument[]
+  chunks             DocumentChunk[]
+  questions          Question[]
+  flashcards         Flashcard[]
+  retrievalEvalCases RetrievalEvalCase[]
+
+  @@unique([monitorId, name])
+  @@unique([monitorId, position])
+  @@map("monitor_subjects")
+}
+
+model MonitorTopic {
+  id        String   @id @default(uuid()) @db.Uuid
+  subjectId String   @map("subject_id") @db.Uuid
+  name      String
+  definition String? @db.Text
+  classificationGuidance String? @map("classification_guidance") @db.Text
+  definitionOrigin String? @map("definition_origin")
+  definitionModel String? @map("definition_model")
+  definitionSources Json? @map("definition_sources")
+  definitionUpdatedAt DateTime? @map("definition_updated_at")
+  aiDefinition String? @map("ai_definition") @db.Text
+  aiClassificationGuidance String? @map("ai_classification_guidance") @db.Text
+  aiDefinitionModel String? @map("ai_definition_model")
+  aiDefinitionSources Json? @map("ai_definition_sources")
+  aiDefinitionUpdatedAt DateTime? @map("ai_definition_updated_at")
+  position  Int
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  subject            MonitorSubject         @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  documents          MonitorDocument[]
+  documentLinks      MonitorDocumentTopic[]
+  chunkLinks         DocumentChunkTopic[]
+  questions          Question[]
+  flashcards         Flashcard[]
+  questionTopicLinks QuestionTopic[]
+  blockTopicLinks    DocumentBlockTopic[]
+
+  @@unique([subjectId, name])
+  @@unique([subjectId, position])
+  @@map("monitor_topics")
+}
+
+model MonitorDocument {
+  id                String         @id @default(uuid()) @db.Uuid
+  teacherId         String         @map("teacher_id") @db.Uuid
+  monitorId         String         @map("monitor_id") @db.Uuid
+  subjectId         String         @map("subject_id") @db.Uuid
+  topicId           String?        @map("topic_id") @db.Uuid
+  tag               DocumentTag
+  originalName      String         @map("original_name")
+  storagePath       String         @map("storage_path")
+  mimeType          String         @map("mime_type")
+  sizeBytes         Int            @map("size_bytes")
+  status            DocumentStatus @default(QUEUED)
+  processingVersion Int            @default(4) @map("processing_version")
+  errorMessage      String?        @map("error_message")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  teacher         Teacher                 @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  monitor         Monitor                 @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  subject         MonitorSubject          @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  topic           MonitorTopic?           @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  topicLinks      MonitorDocumentTopic[]
+  chunks          DocumentChunk[]
+  textExtractions DocumentText[]
+  blocks          DocumentBlock[]
+  processingJobs  DocumentProcessingJob[]
+  questionSources QuestionSource[]
+
+  @@index([teacherId])
+  @@index([monitorId, tag, status])
+  @@index([subjectId, tag])
+  @@index([topicId, tag])
+  @@index([processingVersion, status])
+  @@map("monitor_documents")
+}
+
+model DocumentText {
+  id                String              @id @default(uuid()) @db.Uuid
+  documentId        String              @map("document_id") @db.Uuid
+  extractionVersion String              @map("extraction_version")
+  rawContent        String              @map("raw_content")
+  normalizedContent String?             @map("normalized_content")
+  pageCount         Int?                @map("page_count")
+  quality           DocumentTextQuality @default(GOOD)
+  qualityDetails    Json?               @map("quality_details")
+  createdAt         DateTime            @default(now()) @map("created_at")
+
+  document MonitorDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  pages    DocumentPage[]
+  blocks   DocumentBlock[]
+
+  @@unique([documentId, extractionVersion])
+  @@index([documentId, createdAt])
+  @@map("document_texts")
+}
+
+model DocumentProcessingJob {
+  id                String                      @id @default(uuid()) @db.Uuid
+  documentId        String                      @map("document_id") @db.Uuid
+  operation         DocumentProcessingOperation
+  processingVersion Int                         @map("processing_version")
+  idempotencyKey    String                      @unique @map("idempotency_key")
+  status            DocumentProcessingJobStatus
+  attempts          Int                         @default(0)
+  inputSnapshot     Json?                       @map("input_snapshot")
+  outputSummary     Json?                       @map("output_summary")
+  errorMessage      String?                     @map("error_message")
+  startedAt         DateTime?                   @map("started_at")
+  finishedAt        DateTime?                   @map("finished_at")
+  createdAt         DateTime                    @default(now()) @map("created_at")
+  updatedAt         DateTime                    @updatedAt @map("updated_at")
+
+  document MonitorDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, operation, processingVersion])
+  @@index([documentId, status])
+  @@index([operation, status])
+  @@map("document_processing_jobs")
+}
+
+model RetrievalEvalCase {
+  id                     String   @id @default(uuid()) @db.Uuid
+  teacherId              String   @map("teacher_id") @db.Uuid
+  monitorId              String   @map("monitor_id") @db.Uuid
+  subjectId              String   @map("subject_id") @db.Uuid
+  question               String
+  expectedBlockIds       Json     @map("expected_block_ids")
+  expectedChunkIds       Json?    @map("expected_chunk_ids")
+  expectedAnswerContains Json?    @map("expected_answer_contains")
+  active                 Boolean  @default(true)
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  teacher Teacher            @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  monitor Monitor            @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  subject MonitorSubject     @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  runs    RetrievalEvalRun[]
+
+  @@index([monitorId, subjectId, active])
+  @@map("retrieval_eval_cases")
+}
+
+model RetrievalEvalRun {
+  id               String   @id @default(uuid()) @db.Uuid
+  caseId           String   @map("case_id") @db.Uuid
+  topK             Int      @map("top_k")
+  returnedBlockIds Json     @map("returned_block_ids")
+  returnedChunkIds Json     @map("returned_chunk_ids")
+  recallAtK        Float    @map("recall_at_k")
+  reciprocalRank   Float    @map("reciprocal_rank")
+  contextPrecision Float?   @map("context_precision")
+  durationMs       Int      @map("duration_ms")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  evalCase RetrievalEvalCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, createdAt])
+  @@map("retrieval_eval_runs")
+}
+
+model DocumentPage {
+  id                String   @id @default(uuid()) @db.Uuid
+  documentTextId    String   @map("document_text_id") @db.Uuid
+  pageNumber        Int      @map("page_number")
+  rawContent        String   @map("raw_content")
+  normalizedContent String?  @map("normalized_content")
+  hasImages         Boolean? @map("has_images")
+  charStart         Int?     @map("char_start")
+  charEnd           Int?     @map("char_end")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  documentText DocumentText @relation(fields: [documentTextId], references: [id], onDelete: Cascade)
+
+  @@unique([documentTextId, pageNumber])
+  @@index([documentTextId, pageNumber])
+  @@map("document_pages")
+}
+
+model DocumentBlock {
+  id                String                       @id @default(uuid()) @db.Uuid
+  documentId        String                       @map("document_id") @db.Uuid
+  documentTextId    String                       @map("document_text_id") @db.Uuid
+  parentBlockId     String?                      @map("parent_block_id") @db.Uuid
+  blockIndex        Int                          @map("block_index")
+  type              DocumentBlockType
+  title             String?
+  rawContent        String                       @map("raw_content")
+  normalizedContent String                       @map("normalized_content")
+  sectionPath       Json?                        @map("section_path")
+  questionNumber    String?                      @map("question_number")
+  institution       String?
+  examYear          Int?                         @map("exam_year")
+  pageStart         Int?                         @map("page_start")
+  pageEnd           Int?                         @map("page_end")
+  charStart         Int                          @map("char_start")
+  charEnd           Int                          @map("char_end")
+  contentHash       String                       @map("content_hash")
+  detectionMethod   DocumentBlockDetectionMethod @map("detection_method")
+  confidence        Float?
+  isComplete        Boolean                      @default(true) @map("is_complete")
+  incompleteReason  String?                      @map("incomplete_reason")
+  status            DocumentBlockStatus          @default(READY)
+  createdAt         DateTime                     @default(now()) @map("created_at")
+  updatedAt         DateTime                     @updatedAt @map("updated_at")
+
+  document        MonitorDocument      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  documentText    DocumentText         @relation(fields: [documentTextId], references: [id], onDelete: Cascade)
+  parent          DocumentBlock?       @relation("DocumentBlockHierarchy", fields: [parentBlockId], references: [id], onDelete: SetNull)
+  children        DocumentBlock[]      @relation("DocumentBlockHierarchy")
+  chunks          DocumentChunk[]
+  topicLinks      DocumentBlockTopic[]
+  questionSources QuestionSource[]
+
+  @@unique([documentTextId, blockIndex])
+  @@index([documentId, type, blockIndex])
+  @@index([documentTextId, pageStart, pageEnd])
+  @@index([documentId, questionNumber])
+  @@map("document_blocks")
+}
+
+model MonitorDocumentTopic {
+  documentId String   @map("document_id") @db.Uuid
+  topicId    String   @map("topic_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  document MonitorDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  topic    MonitorTopic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@id([documentId, topicId])
+  @@index([topicId, documentId])
+  @@map("monitor_document_topics")
+}
+
+model DocumentBlockTopic {
+  id                   String                   @id @default(uuid()) @db.Uuid
+  blockId              String                   @map("block_id") @db.Uuid
+  topicId              String?                  @map("topic_id") @db.Uuid
+  classificationMethod DocumentBlockTopicMethod @map("classification_method")
+  confidence           Float?
+  status               DocumentBlockTopicStatus
+  isPrimary            Boolean                  @default(false) @map("is_primary")
+  createdAt            DateTime                 @default(now()) @map("created_at")
+
+  block DocumentBlock @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  topic MonitorTopic? @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([blockId, topicId])
+  @@index([topicId, status, blockId])
+  @@index([blockId, status, isPrimary])
+  @@map("document_block_topics")
+}
+
+model DocumentChunk {
+  id                String                       @id @default(uuid()) @db.Uuid
+  documentId        String                       @map("document_id") @db.Uuid
+  teacherId         String                       @map("teacher_id") @db.Uuid
+  monitorId         String                       @map("monitor_id") @db.Uuid
+  subjectId         String                       @map("subject_id") @db.Uuid
+  blockId           String?                      @map("block_id") @db.Uuid
+  chunkIndex        Int                          @map("chunk_index")
+  chunkIndexInBlock Int?                         @map("chunk_index_in_block")
+  content           String
+  embeddingContent  String?                      @map("embedding_content")
+  contentHash       String                       @map("content_hash")
+  charCount         Int                          @map("char_count")
+  tokenCount        Int?                         @map("token_count")
+  charStart         Int?                         @map("char_start")
+  charEnd           Int?                         @map("char_end")
+  pageStart         Int?                         @map("page_start")
+  pageEnd           Int?                         @map("page_end")
+  embeddingModel    String?                      @map("embedding_model")
+  embeddingVersion  String?                      @map("embedding_version")
+  embeddedAt        DateTime?                    @map("embedded_at")
+  status            ChunkStatus                  @default(EMBEDDING_PENDING)
+  embedding         Unsupported("vector(2048)")?
+  createdAt         DateTime                     @default(now()) @map("created_at")
+  updatedAt         DateTime                     @updatedAt @map("updated_at")
+
+  document         MonitorDocument      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  teacher          Teacher              @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  monitor          Monitor              @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  subject          MonitorSubject       @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  block            DocumentBlock?       @relation(fields: [blockId], references: [id], onDelete: SetNull)
+  topicLinks       DocumentChunkTopic[]
+  questionSources  QuestionSource[]
+  flashcardSources FlashcardSource[]
+
+  @@unique([documentId, chunkIndex])
+  @@unique([blockId, chunkIndexInBlock])
+  @@index([monitorId, subjectId])
+  @@index([teacherId, monitorId])
+  @@index([blockId, chunkIndexInBlock])
+  @@index([documentId, pageStart, pageEnd])
+  @@map("document_chunks")
+}
+
+model Question {
+  id                      String                       @id @default(uuid()) @db.Uuid
+  teacherId               String                       @map("teacher_id") @db.Uuid
+  monitorId               String                       @map("monitor_id") @db.Uuid
+  subjectId               String                       @map("subject_id") @db.Uuid
+  topicId                 String?                      @map("topic_id") @db.Uuid
+  text                    String
+  alternatives            Json
+  kind                    QuestionKind                 @default(UNKNOWN)
+  statementOrigin         QuestionContentOrigin        @default(SOURCE_DOCUMENT) @map("statement_origin")
+  alternativesOrigin      QuestionContentOrigin?       @map("alternatives_origin")
+  categoryOrigin          QuestionContentOrigin?       @map("category_origin")
+  difficulty              String?
+  difficultyOrigin        QuestionContentOrigin?       @map("difficulty_origin")
+  statementConfidence     Float?                       @map("statement_confidence")
+  alternativesConfidence  Float?                       @map("alternatives_confidence")
+  correctAnswer           String?                      @map("correct_answer")
+  correctAnswerOrigin     QuestionAnswerOrigin?        @map("correct_answer_origin")
+  correctAnswerConfidence Float?                       @map("correct_answer_confidence")
+  explanation             String?
+  explanationOrigin       QuestionExplanationOrigin?   @map("explanation_origin")
+  explanationConfidence   Float?                       @map("explanation_confidence")
+  categoryConfidence      Float?                       @map("category_confidence")
+  difficultyConfidence    Float?                       @map("difficulty_confidence")
+  completenessStatus      QuestionCompletenessStatus   @default(MISSING_ANSWER) @map("completeness_status")
+  needsReview             Boolean                      @default(true) @map("needs_review")
+  qualityScore            Float?                       @map("quality_score")
+  textHash                String                       @map("text_hash")
+  sourceKey               String                       @unique @map("source_key")
+  metadata                Json?
+  status                  QuestionStatus               @default(PENDING_REVIEW)
+  reviewedAt              DateTime?                    @map("reviewed_at")
+  reviewedBy              String?                      @map("reviewed_by") @db.Uuid
+  embedding               Unsupported("vector(2048)")?
+  embeddingModel          String?                      @map("embedding_model")
+  embeddingVersion        String?                      @map("embedding_version")
+  embeddedAt              DateTime?                    @map("embedded_at")
+  createdAt               DateTime                     @default(now()) @map("created_at")
+  updatedAt               DateTime                     @updatedAt @map("updated_at")
+
+  teacher       Teacher                @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  monitor       Monitor                @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  subject       MonitorSubject         @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  topic         MonitorTopic?          @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  sources       QuestionSource[]
+  topicLinks    QuestionTopic[]
+  aiGenerations QuestionAiGeneration[]
+
+  @@unique([topicId, textHash])
+  @@index([monitorId, subjectId, topicId, status])
+  @@map("questions")
+}
+
+model QuestionTopic {
+  questionId String   @map("question_id") @db.Uuid
+  topicId    String   @map("topic_id") @db.Uuid
+  isPrimary  Boolean  @default(false) @map("is_primary")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  question Question     @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  topic    MonitorTopic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, topicId])
+  @@index([topicId, questionId])
+  @@map("question_topics")
+}
+
+model QuestionSource {
+  id               String             @id @default(uuid()) @db.Uuid
+  questionId       String             @map("question_id") @db.Uuid
+  chunkId          String             @map("chunk_id") @db.Uuid
+  documentId       String?            @map("document_id") @db.Uuid
+  documentBlockId  String?            @map("document_block_id") @db.Uuid
+  role             QuestionSourceRole @default(CONTEXT)
+  pageStart        Int?               @map("page_start")
+  pageEnd          Int?               @map("page_end")
+  charStartInChunk Int?               @map("char_start_in_chunk")
+  charEndInChunk   Int?               @map("char_end_in_chunk")
+  excerpt          String?
+  confidence       Float?
+  createdAt        DateTime           @default(now()) @map("created_at")
+
+  question      Question         @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  chunk         DocumentChunk    @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+  document      MonitorDocument? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  documentBlock DocumentBlock?   @relation(fields: [documentBlockId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, chunkId, role])
+  @@index([chunkId, questionId])
+  @@map("question_sources")
+}
+
+model QuestionAiGeneration {
+  id              String                   @id @default(uuid()) @db.Uuid
+  questionId      String                   @map("question_id") @db.Uuid
+  generationType  QuestionAiGenerationType @map("generation_type")
+  model           String
+  promptVersion   String?                  @map("prompt_version")
+  inputSnapshot   Json                     @map("input_snapshot")
+  outputSnapshot  Json                     @map("output_snapshot")
+  confidence      Float?
+  acceptedAt      DateTime?                @map("accepted_at")
+  acceptedBy      String?                  @map("accepted_by") @db.Uuid
+  rejectedAt      DateTime?                @map("rejected_at")
+  rejectionReason String?                  @map("rejection_reason")
+  createdAt       DateTime                 @default(now()) @map("created_at")
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  teacher  Teacher? @relation(fields: [acceptedBy], references: [id], onDelete: SetNull)
+
+  @@index([questionId, generationType])
+  @@map("question_ai_generations")
+}
+
+model Flashcard {
+  id               String                    @id @default(uuid()) @db.Uuid
+  teacherId        String                    @map("teacher_id") @db.Uuid
+  monitorId        String                    @map("monitor_id") @db.Uuid
+  subjectId        String                    @map("subject_id") @db.Uuid
+  topicId          String                    @map("topic_id") @db.Uuid
+  front            String
+  back             String
+  kind             FlashcardKind
+  difficulty       FlashcardDifficulty?
+  generationOrigin FlashcardGenerationOrigin @map("generation_origin")
+  status           FlashcardStatus           @default(PENDING_REVIEW)
+  reviewedAt       DateTime?                 @map("reviewed_at")
+  reviewedBy       String?                   @map("reviewed_by") @db.Uuid
+  frontHash        String                    @map("front_hash")
+  createdAt        DateTime                  @default(now()) @map("created_at")
+  updatedAt        DateTime                  @updatedAt @map("updated_at")
+
+  teacher Teacher           @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  monitor Monitor           @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  subject MonitorSubject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  topic   MonitorTopic      @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  sources FlashcardSource[]
+
+  @@unique([topicId, frontHash])
+  @@index([monitorId, subjectId, topicId, status])
+  @@map("flashcards")
+}
+
+model FlashcardSource {
+  flashcardId String   @map("flashcard_id") @db.Uuid
+  chunkId     String   @map("chunk_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  flashcard Flashcard     @relation(fields: [flashcardId], references: [id], onDelete: Cascade)
+  chunk     DocumentChunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+
+  @@id([flashcardId, chunkId])
+  @@index([chunkId, flashcardId])
+  @@map("flashcard_sources")
+}
+
+model DocumentChunkTopic {
+  chunkId   String   @map("chunk_id") @db.Uuid
+  topicId   String   @map("topic_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  chunk DocumentChunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+  topic MonitorTopic  @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@id([chunkId, topicId])
+  @@index([topicId, chunkId])
+  @@map("document_chunk_topics")
+}
+
+enum MonitorStatus {
+  DRAFT
+  READY_TO_PUBLISH
+  PUBLISHED
+  PAUSED
+  ARCHIVED
+}
+
+enum DocumentTag {
+  KNOWLEDGE_BASE
+  QUESTIONS
+  FLASHCARDS
+}
+
+enum DocumentStatus {
+  QUEUED
+  PROCESSING
+  PARTIAL_SUCCESS
+  READY
+  FAILED
+  NEEDS_OCR
+}
+
+enum DocumentProcessingOperation {
+  EXTRACT_TEXT
+  NORMALIZE_TEXT
+  DETECT_BLOCKS
+  CLASSIFY_BLOCKS
+  CREATE_RETRIEVAL_CHUNKS
+  GENERATE_CHUNK_EMBEDDINGS
+  EXTRACT_QUESTIONS_TO_PENDING_REVIEW
+  MATCH_ANSWER_KEYS
+  GENERATE_FLASHCARD_CANDIDATES
+  READY_FOR_REVIEW
+}
+
+enum DocumentProcessingJobStatus {
+  QUEUED
+  PROCESSING
+  READY
+  FAILED
+  SKIPPED
+}
+
+enum DocumentTextQuality {
+  GOOD
+  PARTIAL
+  NEEDS_OCR
+  FAILED
+}
+
+enum DocumentBlockType {
+  TITLE
+  SECTION
+  SUBSECTION
+  THEORY
+  DEFINITION
+  FORMULA
+  EXAMPLE
+  QUESTION
+  ANSWER_KEY
+  SOLUTION
+  TABLE
+  LIST
+  IMAGE_REFERENCE
+  UNKNOWN
+}
+
+enum DocumentBlockDetectionMethod {
+  REGEX
+  HEURISTIC
+  LLM
+  MANUAL
+}
+
+enum DocumentBlockStatus {
+  READY
+  NEEDS_REVIEW
+  FAILED
+}
+
+enum DocumentBlockTopicMethod {
+  INHERITED
+  RULE
+  LLM
+  TEACHER
+}
+
+enum DocumentBlockTopicStatus {
+  PENDING
+  CLASSIFIED
+  OUT_OF_SCOPE
+  REJECTED
+}
+
+enum ChunkStatus {
+  EMBEDDING_PENDING
+  EMBEDDING_PROCESSING
+  READY
+  FAILED
+}
+
+enum QuestionStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum QuestionKind {
+  OPEN_ENDED
+  MULTIPLE_CHOICE
+  TRUE_FALSE
+  UNKNOWN
+}
+
+enum QuestionAnswerOrigin {
+  SOURCE_DOCUMENT
+  TEACHER
+  AI_GENERATED
+  EXTERNAL_SOURCE
+}
+
+enum QuestionExplanationOrigin {
+  SOURCE_DOCUMENT
+  TEACHER
+  AI_GENERATED
+  EXTERNAL_SOURCE
+}
+
+enum QuestionContentOrigin {
+  SOURCE_DOCUMENT
+  RECONSTRUCTED_FROM_DOCUMENT
+  INHERITED_STRUCTURE
+  RULE_BASED
+  VECTOR_CLASSIFIED
+  EXTERNAL_SOURCE
+  AI_GENERATED
+  TEACHER_EDITED
+  TEACHER_CREATED
+}
+
+enum QuestionCompletenessStatus {
+  COMPLETE_FROM_SOURCE
+  COMPLETE_WITH_EXTERNAL_ANSWER
+  COMPLETE_WITH_AI
+  MISSING_ALTERNATIVES
+  MISSING_ANSWER
+  MISSING_EXPLANATION
+  INVALID_FRAGMENT
+}
+
+enum QuestionSourceRole {
+  STATEMENT
+  ALTERNATIVE
+  ANSWER_KEY
+  EXPLANATION
+  CATEGORY_CONTEXT
+  CONTEXT
+}
+
+enum QuestionAiGenerationType {
+  ALTERNATIVES
+  CORRECT_ANSWER
+  EXPLANATION
+  CATEGORY
+  DIFFICULTY
+  FULL_ENRICHMENT
+}
+
+enum FlashcardKind {
+  DEFINITION
+  FORMULA
+  RULE
+  EXCEPTION
+  APPLICATION
+}
+
+enum FlashcardDifficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum FlashcardGenerationOrigin {
+  SOURCE_DOCUMENT
+  AI_GENERATED
+  TEACHER
+}
+
+enum FlashcardStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}

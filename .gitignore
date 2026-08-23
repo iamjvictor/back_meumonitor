@@ -1,0 +1,43 @@
+# Dependências
+node_modules/
+
+# Variáveis de ambiente e segredos
+.env
+.env.*
+!.env.example
+
+# Build e artefatos gerados
+dist/
+build/
+out/
+src/generated/
+
+# Prisma
+prisma/generated/
+
+# Certificados e chaves locais
+certs/
+*.pem
+*.key
+*.crt
+
+# Arquivos temporários e uploads locais
+.tmp/
+tmp/
+uploads/
+storage/
+
+# Logs, cobertura e caches
+logs/
+*.log
+coverage/
+.nyc_output/
+.eslintcache
+.tsbuildinfo
+
+# Sistema operacional e editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
