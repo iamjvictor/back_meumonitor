@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
 import { prisma } from '../lib/prisma.js';
+import { computeFlashcardFrontHash } from '../services/flashcard-front-hash.js';
 
 export async function findFlashcardSourceBlocks(documentId: string) {
   return prisma.documentBlock.findMany({
@@ -52,9 +52,7 @@ export async function saveGeneratedFlashcards(rows: FlashcardPersistenceInput[])
 
   await prisma.$transaction(async (transaction) => {
     for (const row of rows) {
-      const frontHash = createHash('sha256')
-        .update(row.front.toLowerCase().replace(/\s+/g, ' ').trim())
-        .digest('hex');
+      const frontHash = computeFlashcardFrontHash(row.front);
       const existing = await transaction.flashcard.findUnique({
         where: { topicId_frontHash: { topicId: row.topicId, frontHash } },
         select: { id: true },

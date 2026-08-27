@@ -1,19 +1,25 @@
-import { createHash } from 'node:crypto';
-
 import type {
   FlashcardCandidate,
   FlashcardValidationResult,
 } from './flashcard.types.js';
+import {
+  computeFlashcardFrontHash as computeSharedFlashcardFrontHash,
+  normalizeFlashcardFront,
+} from '../../../services/flashcard-front-hash.js';
 
-const ELIGIBLE_BLOCK_TYPES = new Set(['THEORY', 'DEFINITION', 'FORMULA', 'EXAMPLE']);
-const MIN_SOURCE_TEXT_LENGTH = 20;
-const MIN_FRONT_LENGTH = 10;
-const MAX_FRONT_LENGTH = 300;
-const MIN_BACK_LENGTH = 2;
-const MAX_BACK_LENGTH = 1500;
+/** Minimum normalized content length for a source block to be considered meaningful. */
+export const FLASHCARD_MIN_SOURCE_TEXT_LENGTH = 20;
+/** Inclusive normalized front length limits, matching the generation schema. */
+export const FLASHCARD_MIN_FRONT_LENGTH = 10;
+export const FLASHCARD_MAX_FRONT_LENGTH = 300;
+/** Inclusive normalized back length limits, matching the generation schema. */
+export const FLASHCARD_MIN_BACK_LENGTH = 2;
+export const FLASHCARD_MAX_BACK_LENGTH = 1500;
+
+const ELIGIBLE_BLOCK_TYPES = new Set(['THEORY', 'DEFINITION', 'FORMULA', 'EXAMPLE', 'QUESTION']);
 
 function normalizeText(value: string) {
-  return value.normalize('NFKC').replace(/\s+/gu, ' ').trim().toLocaleLowerCase();
+  return normalizeFlashcardFront(value);
 }
 
 function getEvidence(candidate: FlashcardCandidate): string[] {
@@ -23,7 +29,7 @@ function getEvidence(candidate: FlashcardCandidate): string[] {
 
 export function isFlashcardEligible(blockType: string, text: string): boolean {
   return ELIGIBLE_BLOCK_TYPES.has(blockType.trim().toUpperCase())
-    && normalizeText(text).length >= MIN_SOURCE_TEXT_LENGTH;
+    && normalizeText(text).length >= FLASHCARD_MIN_SOURCE_TEXT_LENGTH;
 }
 
 export function validateFlashcardCandidate(
@@ -34,10 +40,10 @@ export function validateFlashcardCandidate(
   const back = typeof candidate?.back === 'string' ? normalizeText(candidate.back) : '';
 
   if (!front || !back) return { valid: false, reason: 'EMPTY_CARD' };
-  if (front.length < MIN_FRONT_LENGTH || front.length > MAX_FRONT_LENGTH) {
+  if (front.length < FLASHCARD_MIN_FRONT_LENGTH || front.length > FLASHCARD_MAX_FRONT_LENGTH) {
     return { valid: false, reason: 'INVALID_FRONT_LENGTH' };
   }
-  if (back.length < MIN_BACK_LENGTH || back.length > MAX_BACK_LENGTH) {
+  if (back.length < FLASHCARD_MIN_BACK_LENGTH || back.length > FLASHCARD_MAX_BACK_LENGTH) {
     return { valid: false, reason: 'INVALID_BACK_LENGTH' };
   }
   if (front === back) return { valid: false, reason: 'FRONT_EQUALS_BACK' };
@@ -57,5 +63,5 @@ export function validateFlashcardCandidate(
 }
 
 export function computeFlashcardFrontHash(front: string): string {
-  return createHash('sha256').update(normalizeText(front)).digest('hex');
+  return computeSharedFlashcardFrontHash(front);
 }

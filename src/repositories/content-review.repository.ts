@@ -1,11 +1,7 @@
-import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import type { FlashcardReviewInput, QuestionReviewInput } from '../models/content-review.model.js';
 import { prisma } from '../lib/prisma.js';
-
-function frontHash(front: string) {
-  return createHash('sha256').update(front.toLowerCase().replace(/\s+/g, ' ').trim()).digest('hex');
-}
+import { computeFlashcardFrontHash } from '../services/flashcard-front-hash.js';
 
 export async function reviewQuestion(
   userId: string,
@@ -87,6 +83,7 @@ export async function reviewQuestion(
     return updated;
   });
 }
+
 
 function parseAlternatives(value: Prisma.JsonValue) {
   return Array.isArray(value) ? value : [];
@@ -185,10 +182,9 @@ export async function reviewFlashcard(
       status: input.status ?? flashcard.status,
       front: input.front !== undefined ? input.front : undefined,
       back: input.back !== undefined ? input.back : undefined,
-      frontHash: front ? frontHash(front) : undefined,
+      frontHash: front ? computeFlashcardFrontHash(front) : undefined,
       reviewedAt: new Date(),
       reviewedBy: teacher.id,
     },
   });
 }
-
