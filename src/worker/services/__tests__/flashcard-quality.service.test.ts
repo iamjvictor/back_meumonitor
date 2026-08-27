@@ -107,6 +107,17 @@ test('accepts the documented source and card length boundaries', () => {
   }, source);
   assert.deepEqual(result, { valid: true });
 
+  assert.deepEqual(validateFlashcardCandidate({
+    front: 'f'.repeat(FLASHCARD_MAX_FRONT_LENGTH),
+    back: 'valid back',
+    evidence: [source],
+  }, source), { valid: true });
+  assert.deepEqual(validateFlashcardCandidate({
+    front: 'valid front',
+    back: 'b'.repeat(FLASHCARD_MAX_BACK_LENGTH),
+    evidence: [source],
+  }, source), { valid: true });
+
   const overlongFront = validateFlashcardCandidate({
     front: 'f'.repeat(FLASHCARD_MAX_FRONT_LENGTH + 1),
     back: 'valid back',
