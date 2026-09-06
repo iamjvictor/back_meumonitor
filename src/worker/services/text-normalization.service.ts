@@ -65,7 +65,9 @@ function repairPrefixedDiacritics(
   maxSamples: number,
   maxSampleLength: number,
 ) {
-  const repaired = content.replace(/([´`ˆ^˜¨¸])\t*([\p{L}])/gu, (match, accent: string, letter: string) => {
+  // Alguns extratores de PDF separam o acento da letra por espaço, por
+  // exemplo: "constru¸ c˜ ao" em vez de "construção".
+  const repaired = content.replace(/([´`ˆ^˜¨¸])[ \t]*([\p{L}])/gu, (match, accent: string, letter: string) => {
     const combiningMark = PREFIXED_DIACRITICS[accent];
     if (!combiningMark || (accent === '¸' && !/[cC]/u.test(letter))) return match;
     if ((accent === 'ˆ' || accent === '^' || accent === '¨') && !/[aAeEiIoOuUÁÀÃÂÉÊÍÓÔÕÚáàãâéêíóôõú]/u.test(letter)) {

@@ -5,7 +5,7 @@ CREATE TYPE "DocumentProcessingOperation" AS ENUM (
   'GENERATE_FLASHCARD_CANDIDATES', 'READY_FOR_REVIEW'
 );
 
-CREATE TYPE "DocumentProcessingJobStatus" AS ENUM ('QUEUED', 'PROCESSING', 'READY', 'FAILED', 'SKIPPED');
+CREATE TYPE "DocumentProcessingJobStatus" AS ENUM ('QUEUED', 'PROCESSING', 'PARTIAL_SUCCESS', 'READY', 'FAILED', 'SKIPPED');
 
 CREATE TABLE "document_processing_jobs" (
   "id" UUID NOT NULL DEFAULT gen_random_uuid(),

@@ -10,6 +10,7 @@ export interface TeacherProfileResponse {
   bio: string | null;
   pageSlug: string;
   avatarUrl: string | null;
+  bannerUrl: string | null;
   instagram: string | null;
   tiktok: string | null;
   youtube: string | null;

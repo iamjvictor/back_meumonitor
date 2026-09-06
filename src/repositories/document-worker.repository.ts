@@ -1,9 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
+import { acquireDocumentAdvisoryLocks } from './document-advisory-lock.js';
 import { prisma } from '../lib/prisma.js';
 
 const DOCUMENT_PAGE_INSERT_BATCH_SIZE = 25;
 const DOCUMENT_TEXT_TRANSACTION_TIMEOUT_MS = 15_000;
+
+export function assertChunkReplacementSafe(hasExistingFlashcardSource: boolean) {
+  if (hasExistingFlashcardSource) {
+    throw new Error('Substituicao de chunks abortada: o documento possui FlashcardSource vinculada; chunks, sources e cards foram preservados.');
+  }
+}
 
 export async function findDocumentForProcessing(documentId: string) {
   console.log('Buscando documento no banco para o worker', {
@@ -175,7 +182,7 @@ export async function findDocumentBlocksForChunking(documentId: string, document
   });
 
   const blocks = await prisma.documentBlock.findMany({
-    where: { documentId, documentTextId, status: { not: 'FAILED' }, isComplete: true },
+    where: { documentId, documentTextId, status: { not: 'FAILED' } },
     select: {
       id: true,
       blockIndex: true,
@@ -237,6 +244,7 @@ export async function saveExtractedChunks(documentId: string, chunks: DocumentCh
       teacherId: true,
       monitorId: true,
       subjectId: true,
+      topicLinks: { select: { topicId: true } },
     },
   });
 
@@ -256,6 +264,12 @@ export async function saveExtractedChunks(documentId: string, chunks: DocumentCh
   if (blocks.length !== blockIds.length) {
     throw new Error('Um ou mais blocos dos chunks nao pertencem ao documento.');
   }
+
+  const documentTopicIds = Array.from(new Set(
+    document.topicLinks
+      .map((topic) => topic.topicId)
+      .filter((topicId): topicId is string => topicId !== null),
+  ));
 
   const chunkRows = chunks.map((chunk, chunkIndex) => ({
     id: randomUUID(),
@@ -277,6 +291,24 @@ export async function saveExtractedChunks(documentId: string, chunks: DocumentCh
     pageEnd: chunk.pageEnd,
     status: chunk.status,
   }));
+  const topicIdsByBlockId = new Map(
+    blocks.map((block) => {
+      const blockTopicIds = Array.from(new Set(
+        block.topicLinks
+          .map((topic) => topic.topicId)
+          .filter((topicId): topicId is string => topicId !== null),
+      ));
+      return [block.id, blockTopicIds.length > 0 ? blockTopicIds : documentTopicIds] as const;
+    }),
+  );
+  const chunkTopicRows = chunkRows.flatMap((chunk) =>
+    (topicIdsByBlockId.get(chunk.blockId) ?? []).map((topicId) => ({
+      chunkId: chunk.id,
+      topicId,
+    })),
+  );
+  const topicCount = new Set(chunkTopicRows.map((topic) => topic.topicId)).size;
+  const topicLinkCount = chunkTopicRows.length;
 
   console.log('Iniciando transacao dos chunks', {
     event: 'monitor.document_chunks_transaction_started',
@@ -287,20 +319,21 @@ export async function saveExtractedChunks(documentId: string, chunks: DocumentCh
   });
 
   await prisma.$transaction(async (transaction) => {
+    // Serialize replacement per document, then re-check the source immediately
+    // before the destructive operation. The check outside this transaction is
+    // intentionally not trusted for concurrency safety.
+    await acquireDocumentAdvisoryLocks(transaction, [documentId]);
+    const existingSource = await transaction.flashcardSource.findFirst({
+      where: { chunk: { documentId } },
+      select: { chunkId: true },
+    });
+    assertChunkReplacementSafe(Boolean(existingSource));
     await transaction.documentChunk.deleteMany({ where: { documentId } });
 
     if (chunkRows.length > 0) {
       await transaction.documentChunk.createMany({ data: chunkRows });
       await transaction.documentChunkTopic.createMany({
-        data: chunkRows.flatMap((chunk) => {
-          const block = blocks.find((candidate) => candidate.id === chunk.blockId);
-          return block?.topicLinks
-            .filter((topic): topic is { topicId: string } => topic.topicId !== null)
-            .map((topic) => ({
-              chunkId: chunk.id,
-              topicId: topic.topicId,
-            })) ?? [];
-        }),
+        data: chunkTopicRows,
         skipDuplicates: true,
       });
     }
@@ -311,18 +344,14 @@ export async function saveExtractedChunks(documentId: string, chunks: DocumentCh
     documentId,
     chunkCount: chunkRows.length,
     blockCount: blockIds.length,
-    topicLinkCount: chunkRows.reduce((total, chunk) => {
-      const block = blocks.find((candidate) => candidate.id === chunk.blockId);
-      return total + (block?.topicLinks.length ?? 0);
-    }, 0),
+    topicLinkCount,
     status: 'EMBEDDING_PENDING',
   });
 
   return {
     chunkCount: chunkRows.length,
-    topicCount: new Set(
-      blocks.flatMap((block) => block.topicLinks.map((topic) => topic.topicId)),
-    ).size,
+    topicCount,
+    topicLinkCount,
   };
 }
 
@@ -451,6 +480,34 @@ export async function findPendingChunksForEmbedding(documentId: string) {
   });
 
   return chunks;
+}
+
+export async function findChunkForFlashcardGeneration(chunkId: string) {
+  return prisma.documentChunk.findUnique({
+    where: { id: chunkId },
+    select: {
+      id: true,
+      content: true,
+      status: true,
+      block: { select: { type: true } },
+      document: {
+        select: {
+          teacherId: true,
+          monitorId: true,
+          subjectId: true,
+        },
+      },
+      topicLinks: { select: { topicId: true } },
+    },
+  });
+}
+
+export async function findFlashcardGenerationChunkIds(documentId: string) {
+  const chunks = await prisma.documentChunk.findMany({
+    where: { documentId, status: 'READY', block: { type: { in: ['THEORY', 'DEFINITION', 'FORMULA', 'EXAMPLE'] } } },
+    select: { id: true }, orderBy: { chunkIndex: 'asc' },
+  });
+  return chunks.map((chunk) => chunk.id);
 }
 
 export async function markChunksEmbeddingProcessing(chunkIds: string[]) {

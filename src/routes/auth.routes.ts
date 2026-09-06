@@ -19,6 +19,11 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.post('/signup', { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, authController.signup.bind(authController));
   app.post('/login', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, loginController.handle.bind(loginController));
+  app.post('/logout', async (_request, reply) => {
+    reply.clearCookie('mm_access_token', { path: '/' });
+    reply.clearCookie('mm_refresh_token', { path: '/' });
+    return reply.code(204).send();
+  });
   app.post('/register/teacher', {
     onRequest: authMiddleware,
     config: { rateLimit: { max: 5, timeWindow: '15 minutes' } },

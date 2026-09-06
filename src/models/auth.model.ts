@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 const signupPayloadSchema = z.object({
   email: z.string().trim().email().max(254),
-  password: z.string().min(8).max(72).regex(/[A-Z]/).regex(/[a-z]/).regex(/[0-9]/).regex(/[^A-Za-z0-9]/),
+  password: z.string().min(6).max(72),
   name: z.string().trim().min(2).max(120).optional(),
   fullName: z.string().trim().min(2).max(120).optional(),
   cpf: z.string().trim().min(11).max(14).optional(),
@@ -10,16 +10,18 @@ const signupPayloadSchema = z.object({
   whatsapp: z.string().trim().min(8).max(30).optional(),
   phone: z.string().trim().min(8).max(30).optional(),
   docType: z.enum(['CPF', 'CNPJ']).default('CPF'),
-  role: z.literal('teacher').default('teacher'),
+  role: z.enum(['teacher', 'student']).default('teacher'),
 }).superRefine((input, context) => {
   if (!input.name && !input.fullName) {
     context.addIssue({ code: 'custom', path: ['name'], message: 'Nome e obrigatorio.' });
   }
-  if (!input.cpf && !input.documentNumber) {
-    context.addIssue({ code: 'custom', path: ['documentNumber'], message: 'Documento e obrigatorio.' });
-  }
-  if (!input.whatsapp && !input.phone) {
-    context.addIssue({ code: 'custom', path: ['phone'], message: 'WhatsApp/telefone e obrigatorio.' });
+  if (input.role === 'teacher') {
+    if (!input.cpf && !input.documentNumber) {
+      context.addIssue({ code: 'custom', path: ['documentNumber'], message: 'Documento e obrigatorio para professores.' });
+    }
+    if (!input.whatsapp && !input.phone) {
+      context.addIssue({ code: 'custom', path: ['phone'], message: 'WhatsApp/telefone e obrigatorio para professores.' });
+    }
   }
 });
 
@@ -27,8 +29,8 @@ export const signupSchema = signupPayloadSchema.transform((input) => ({
   email: input.email,
   password: input.password,
   name: input.name ?? input.fullName!,
-  cpf: input.cpf ?? input.documentNumber!,
-  whatsapp: input.whatsapp ?? input.phone!,
+  cpf: input.cpf ?? input.documentNumber ?? '',
+  whatsapp: input.whatsapp ?? input.phone ?? '',
   docType: input.docType,
   role: input.role,
 }));
@@ -38,7 +40,7 @@ export type SignupInput = z.infer<typeof signupSchema>;
 export interface SignupResult {
   userId: string;
   email: string;
-  role: 'teacher';
+  role: 'teacher' | 'student';
   emailConfirmationRequired: boolean;
   session?: {
     accessToken: string;

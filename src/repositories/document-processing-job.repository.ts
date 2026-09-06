@@ -7,7 +7,6 @@ export const DOCUMENT_PROCESSING_OPERATIONS = [
   'EXTRACT_TEXT',
   'NORMALIZE_TEXT',
   'DETECT_BLOCKS',
-  'CLASSIFY_BLOCKS',
   'CREATE_RETRIEVAL_CHUNKS',
   'GENERATE_CHUNK_EMBEDDINGS',
   'EXTRACT_QUESTIONS_TO_PENDING_REVIEW',
@@ -115,10 +114,11 @@ export async function completeDocumentProcessingJob(
   documentId: string,
   operation: DocumentProcessingOperation,
   outputSummary?: Prisma.InputJsonValue,
+  status: 'READY' | 'PARTIAL_SUCCESS' = 'READY',
 ) {
   return prisma.documentProcessingJob.update({
     where: { idempotencyKey: idempotencyKey(documentId, operation) },
-    data: { status: 'READY', outputSummary, errorMessage: null, finishedAt: new Date() },
+    data: { status, outputSummary, errorMessage: null, finishedAt: new Date() },
   });
 }
 
@@ -126,11 +126,12 @@ export async function failDocumentProcessingJob(
   documentId: string,
   operation: DocumentProcessingOperation,
   error: unknown,
+  outputSummary?: Prisma.InputJsonValue,
 ) {
   const message = error instanceof Error ? error.message : String(error);
   return prisma.documentProcessingJob.update({
     where: { idempotencyKey: idempotencyKey(documentId, operation) },
-    data: { status: 'FAILED', errorMessage: message.slice(0, 2000), finishedAt: new Date() },
+    data: { status: 'FAILED', errorMessage: message.slice(0, 2000), outputSummary, finishedAt: new Date() },
   });
 }
 

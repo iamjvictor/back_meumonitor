@@ -1,5 +1,6 @@
 import { supabaseAdmin, supabaseAuth } from '../lib/supabase.js';
 import type { SignupInput, SignupResult } from '../models/auth.model.js';
+import { StudentRepository } from './student.repository.js';
 
 export class AuthRepository {
   async signup(input: SignupInput): Promise<SignupResult> {
@@ -34,6 +35,17 @@ export class AuthRepository {
     if (sessionError || !sessionData.session) {
       await supabaseAdmin.auth.admin.deleteUser(createdData.user.id);
       throw new AuthRepositoryError(sessionError?.message ?? 'Sessao nao criada apos signup');
+    }
+
+    if (input.role === 'student') {
+      const studentRepo = new StudentRepository();
+      await studentRepo.upsertStudent({
+        userId: createdData.user.id,
+        fullName: input.name,
+        email: input.email,
+        phone: input.whatsapp,
+        cpf: input.cpf,
+      });
     }
 
     return {

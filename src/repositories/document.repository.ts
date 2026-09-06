@@ -39,13 +39,7 @@ export class DocumentRepository {
 
     if (!scope) return { kind: 'SCOPE_NOT_FOUND' as const };
 
-    const topicIds = input.topicId
-      ? [input.topicId]
-      : (await prisma.monitorTopic.findMany({
-          where: { subjectId: input.subjectId },
-          select: { id: true },
-          orderBy: { position: 'asc' },
-        })).map((topic) => topic.id);
+    const topicIds = [input.topicId];
 
     console.log('Escopo do documento validado', {
       event: 'monitor.document_scope_validation_completed',
@@ -61,7 +55,7 @@ export class DocumentRepository {
       .replace(/[^a-zA-Z0-9._-]/g, '_')
       .replace(/\.{2,}/g, '.')
       .slice(0, 180);
-    const scopeFolder = input.topicId || 'subject';
+    const scopeFolder = input.topicId;
     const storagePath = `${scope.teacherId}/${monitorId}/${input.subjectId}/${scopeFolder}/${documentId}-${safeName || 'document'}`;
 
     const preparedFile = await compressPdfForStorage({

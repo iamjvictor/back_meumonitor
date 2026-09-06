@@ -12,34 +12,11 @@ export class DocumentService {
     input: UploadDocumentInput,
     file: { buffer: Buffer; originalName: string; mimeType: string; sizeBytes: number },
   ) {
-    console.log('Service de documentos iniciado', {
-      event: 'monitor.document_service_started',
-      userId,
-      monitorId,
-      tag: input.tag,
-      subjectId: input.subjectId,
-      topicId: input.topicId,
-      filename: file.originalName,
-      sizeBytes: file.sizeBytes,
-    });
-
     const document = await this.repository.save(userId, monitorId, input, file);
     if (document.kind === 'SCOPE_NOT_FOUND') return document;
 
     try {
-      console.log('Publicando documento no BullMQ', {
-        event: 'monitor.document_queue_publish_started',
-        documentId: document.document.id,
-        tag: document.document.tag,
-      });
-
       await documentQueue.add('process-document', { documentId: document.document.id }, { jobId: document.document.id });
-      console.log('Documento publicado no BullMQ', {
-        event: 'monitor.document_queue_publish_completed',
-        documentId: document.document.id,
-        queue: 'monitor-documents',
-        jobName: 'process-document',
-      });
     } catch (error) {
       throw new DocumentQueueError(error instanceof Error ? error.message : 'Falha ao publicar job no Redis.');
     }

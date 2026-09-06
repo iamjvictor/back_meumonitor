@@ -21,6 +21,12 @@ export async function contentReviewRoutes(app: FastifyInstance) {
     controller.listDocuments.bind(controller),
   );
 
+  app.post<{ Params: { monitorId: string }; Body: unknown }>(
+    '/:monitorId/questions',
+    { onRequest: authMiddleware },
+    controller.createQuestion.bind(controller),
+  );
+
   // Rotas de atualização de questões (com e sem sufixo /review)
   app.put<{ Params: { monitorId: string; questionId: string }; Body: unknown }>(
     '/:monitorId/questions/:questionId/review',

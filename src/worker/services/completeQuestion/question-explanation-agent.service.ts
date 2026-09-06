@@ -5,6 +5,7 @@ import {
 import { formatAlternatives } from './question-alternatives-agent.service.js';
 import { QuestionCompletionRequestService } from './question-completion-request.service.js';
 import type { CompletionGeneration, QuestionAgentFailure, QuestionCompletionInput } from './question-completion.types.js';
+import { buildQuestionAgentContext } from '../question-context-pack.service.js';
 
 export class QuestionExplanationAgentService {
   constructor(private readonly requestService = new QuestionCompletionRequestService()) {}
@@ -17,6 +18,9 @@ export class QuestionExplanationAgentService {
   }> {
     const explanation = input.explanation?.trim();
     if (explanation && explanation.length >= 10) return { explanation, generated: false };
+    const sourceContext = input.contextPack
+      ? buildQuestionAgentContext(input.contextPack, 'EXPLANATION')
+      : input.sourceContext;
 
     const response = await this.requestService.request({
       task: 'question_explanation',
@@ -29,7 +33,7 @@ export class QuestionExplanationAgentService {
         },
         {
           role: 'user',
-          content: `Enunciado:\n${input.statement}\n\nAlternativas:\n${formatAlternatives(input.alternatives)}\n\nGabarito:\n${input.correctAnswer ?? '(ausente)'}`,
+          content: `Enunciado:\n${input.statement}\n\nAlternativas:\n${formatAlternatives(input.alternatives)}\n\nGabarito:\n${input.correctAnswer ?? '(ausente)'}\n\nTrechos de evidencia do documento:\n${sourceContext.slice(0, 12000) || '(nenhum)'}`,
         },
       ],
     });
@@ -55,7 +59,7 @@ export class QuestionExplanationAgentService {
       generation: {
         generationType: 'EXPLANATION',
         model: response.model,
-        inputSnapshot: { statement: input.statement, alternatives: input.alternatives, correctAnswer: input.correctAnswer },
+        inputSnapshot: { statement: input.statement, alternatives: input.alternatives, correctAnswer: input.correctAnswer, sourceContext },
         outputSnapshot: response.data,
         confidence: 0.8,
       },

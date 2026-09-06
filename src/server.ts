@@ -13,11 +13,17 @@ import { monitorRoutes } from './routes/monitor.routes.js';
 import { documentRoutes } from './routes/document.routes.js';
 import { contentReviewRoutes } from './routes/content-review.routes.js';
 import { questionRoutes } from './routes/question.routes.js';
+import { studentPurchaseRoutes } from './routes/student-purchase.routes.js';
+import { registerDailyChallgensModule } from './modules/daily_challgens/daily-challgens.module.js';
+import { studentQuestionAttemptRoutes } from './modules/student-question-attempts/routes/student-question-attempt.routes.js';
+import { studentConsistencyRoutes } from './modules/student-consistency/routes/student-consistency.routes.js';
+import { studentPerformanceRoutes } from './modules/student-performance/routes/student-performance.routes.js';
 
 // Railway terminates HTTPS at the public edge; the Node process listens on HTTP internally.
 const app = Fastify({
   trustProxy: true,
   logger: false,
+  bodyLimit: 10 * 1024 * 1024, // 10MB limit for uploading base64 avatars
 });
 
 app.addHook('onRequest', async (request) => {
@@ -51,7 +57,7 @@ await app.register(cors, {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Cookie'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Cookie', 'Idempotency-Key', 'X-Simulated-Session'],
 });
 await app.register(rateLimit, { max: 100, timeWindow: '1 minute' });
 
@@ -62,10 +68,17 @@ await app.register(authRoutes, { prefix: '/api/v1/auth' });
 await app.register(protectedRoutes, { prefix: '/api/v1' });
 await app.register(teacherRoutes, { prefix: '/api/v1/teachers' });
 await app.register(profileImageRoutes, { prefix: '/api/v1/teachers' });
+await app.register(profileImageRoutes, { prefix: '/api/v1/student' });
+await app.register(profileImageRoutes, { prefix: '/api/v1' });
 await app.register(monitorRoutes, { prefix: '/api/v1/monitors' });
 await app.register(documentRoutes, { prefix: '/api/v1/monitors' });
 await app.register(contentReviewRoutes, { prefix: '/api/v1/monitors' });
 await app.register(questionRoutes, { prefix: '/api/v1/questions' });
+await app.register(studentPurchaseRoutes, { prefix: '/api/v1/student' });
+await app.register(registerDailyChallgensModule, { prefix: '/api/v1/student' });
+await app.register(studentQuestionAttemptRoutes, { prefix: '/api/v1/student' });
+await app.register(studentConsistencyRoutes, { prefix: '/api/v1/student' });
+await app.register(studentPerformanceRoutes, { prefix: '/api/v1/student' });
 
 
 app.setErrorHandler((error, request, reply) => {

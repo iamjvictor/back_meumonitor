@@ -21,6 +21,24 @@ export class TeacherService {
     return teacher;
   }
 
+  async updateMyProfile(user: { id: string; email?: string; fullName?: string; whatsapp?: string }, input: any) {
+    console.log('TeacherService.updateMyProfile iniciado', {
+      event: 'teacher.profile_update_service_started',
+      userId: user.id,
+      inputKeys: Object.keys(input || {}),
+    });
+
+    const teacher = await this.repository.updateProfile(user, input);
+
+    console.log('TeacherService.updateMyProfile concluido', {
+      event: 'teacher.profile_update_service_completed',
+      userId: user.id,
+      teacherId: teacher.id,
+    });
+
+    return teacher;
+  }
+
   async findPublicProfile(pageSlug: string) {
     console.log('Buscando pagina publica do professor', {
       event: 'teacher.public_profile_lookup_started',

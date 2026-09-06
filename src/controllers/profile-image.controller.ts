@@ -7,7 +7,6 @@ export class ProfileImageController {
 
   async upload(request: FastifyRequest, reply: FastifyReply) {
     if (!request.user) return reply.code(401).send({ error: 'UNAUTHENTICATED', message: 'Sessao de usuario obrigatoria.' });
-    if (request.user.role !== 'teacher') return reply.code(403).send({ error: 'FORBIDDEN', message: 'Apenas professores podem enviar foto de perfil.' });
 
     const part = await request.file();
     if (!part) return reply.code(400).send({ error: 'IMAGE_REQUIRED', message: 'Envie uma imagem no campo file.' });

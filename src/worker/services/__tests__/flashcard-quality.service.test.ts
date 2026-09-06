@@ -76,6 +76,25 @@ test('rejects evidence that is not grounded in the source text', () => {
   assert.equal(result.reason, 'UNGROUNDED_EVIDENCE');
 });
 
+test('rejects nominal fronts that only label the content', () => {
+  for (const front of ['Fórmula de área do círculo', 'Enunciado de Pitágoras', 'Definição de triângulo']) {
+    const result = validateFlashcardCandidate(candidate({ front }), sourceText);
+    assert.deepEqual(result, { valid: false, reason: 'NOMINAL_FRONT' }, front);
+  }
+});
+
+test('rejects vague or context-dependent fronts', () => {
+  assert.deepEqual(validateFlashcardCandidate(candidate({ front: 'Qual é a fórmula?' }), sourceText), { valid: false, reason: 'VAGUE_FRONT' });
+  assert.deepEqual(validateFlashcardCandidate(candidate({ front: 'Explique tudo sobre fotossíntese.' }), sourceText), { valid: false, reason: 'MULTI_CONCEPT_FRONT' });
+  assert.deepEqual(validateFlashcardCandidate(candidate({ front: 'Qual é a definição apresentada acima?' }), sourceText), { valid: false, reason: 'CONTEXT_DEPENDENT_FRONT' });
+  assert.deepEqual(validateFlashcardCandidate(candidate({ front: 'Quais figuras planas são listadas no trecho como tópicos da "Figuras planas parte 2"?' }), sourceText), { valid: false, reason: 'CONTEXT_DEPENDENT_FRONT' });
+  assert.deepEqual(validateFlashcardCandidate(candidate({ front: 'Quais tópicos específicos sobre polígonos são anunciados no trecho "Figuras planas parte 3"?' }), sourceText), { valid: false, reason: 'CONTEXT_DEPENDENT_FRONT' });
+});
+
+test('accepts a specific autonomous retrieval question', () => {
+  assert.deepEqual(validateFlashcardCandidate(candidate({ front: 'Como a fotossíntese converte energia luminosa?' }), sourceText), { valid: true });
+});
+
 test('accepts a non-empty candidate with grounded evidence', () => {
   assert.deepEqual(validateFlashcardCandidate(candidate(), sourceText), { valid: true });
 });

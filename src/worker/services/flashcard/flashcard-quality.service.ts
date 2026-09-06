@@ -27,6 +27,24 @@ function getEvidence(candidate: FlashcardCandidate): string[] {
   return Array.isArray(candidate.evidence) ? candidate.evidence : [candidate.evidence];
 }
 
+function classifyFrontQuality(front: string): string | undefined {
+  if (/^(?:f[oó]rmula|enunciado|defini[cç][aã]o|teorema|conceito|resumo|caracter[ií]sticas)\s+d[aeo]\b/u.test(front)) {
+    return 'NOMINAL_FRONT';
+  }
+  if (/^(?:o que [eé]|qual [eé]|como se calcula)\s*(?:[?!.]|a formula\??|a defini[cç][aã]o\??|a resposta\??|a regra\??)?$/u.test(front)
+    || /^(?:qual [eé])\s+(?:a|o)\s+(?:f[oó]rmula|defini[cç][aã]o|enunciado|regra)\??$/u.test(front)) {
+    return 'VAGUE_FRONT';
+  }
+  if (/\b(?:explique tudo|tudo sobre|fale sobre|explique o assunto|explique a mat[eé]ria)\b/u.test(front)) {
+    return 'MULTI_CONCEPT_FRONT';
+  }
+  if (/\b(?:acima|abaixo|anterior|seguinte|neste texto|no texto|na figura|figura acima|figura abaixo|o texto|a figura|isso|essa figura|esse caso|trecho|passagem|se[cç][aã]o)\b/u.test(front)
+    || /\b(?:listad[ao]s?|anunciad[ao]s?|mencionad[ao]s?)\s+(?:no|na)\s+(?:trecho|passagem|se[cç][aã]o)\b/u.test(front)) {
+    return 'CONTEXT_DEPENDENT_FRONT';
+  }
+  return undefined;
+}
+
 export function isFlashcardEligible(blockType: string, text: string): boolean {
   return ELIGIBLE_BLOCK_TYPES.has(blockType.trim().toUpperCase())
     && normalizeText(text).length >= FLASHCARD_MIN_SOURCE_TEXT_LENGTH;
@@ -47,6 +65,8 @@ export function validateFlashcardCandidate(
     return { valid: false, reason: 'INVALID_BACK_LENGTH' };
   }
   if (front === back) return { valid: false, reason: 'FRONT_EQUALS_BACK' };
+  const frontQualityReason = classifyFrontQuality(front);
+  if (frontQualityReason) return { valid: false, reason: frontQualityReason };
 
   const evidence = getEvidence(candidate)
     .filter((item): item is string => typeof item === 'string')

@@ -1,5 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { createMonitorSchema, monitorIdParamsSchema } from '../models/monitor.model.js';
+import { createMonitorSchema, monitorIdParamsSchema, updateMonitorSchema } from '../models/monitor.model.js';
 import { MonitorService } from '../services/monitor.service.js';
 
 export class MonitorController {
@@ -62,21 +62,57 @@ export class MonitorController {
   }
 
   async listMine(request: FastifyRequest, reply: FastifyReply) {
-    if (!request.user) return reply.code(401).send({ error: 'UNAUTHENTICATED', message: 'Sessao de usuario obrigatoria.' });
-    if (request.user.role !== 'teacher') return reply.code(403).send({ error: 'FORBIDDEN', message: 'Apenas professores podem acessar Monitores de IA.' });
+    console.log('[MonitorController.listMine] Requisicao recebida:', {
+      requestId: request.id,
+      userId: request.user?.id,
+      userRole: request.user?.role,
+    });
+
+    if (!request.user) {
+      console.log('[MonitorController.listMine] Nao autenticado.');
+      return reply.code(401).send({ error: 'UNAUTHENTICATED', message: 'Sessao de usuario obrigatoria.' });
+    }
+
+    const isTeacherRole = ['teacher', 'professor', 'admin'].includes(request.user.role?.toLowerCase() || '');
+    let isTeacher = isTeacherRole;
+
+    if (!isTeacher) {
+      // Fallback: check if teacher record exists in DB
+      const { TeacherRepository } = await import('../repositories/teacher.repository.js');
+      const teacherRepo = new TeacherRepository();
+      const teacher = await teacherRepo.findByUserId(request.user.id);
+      if (teacher) isTeacher = true;
+    }
+
+    console.log('[MonitorController.listMine] Status de autorizacao:', {
+      userId: request.user.id,
+      tokenRole: request.user.role,
+      isTeacherAllowed: isTeacher,
+    });
+
+    if (!isTeacher) {
+      console.log('[MonitorController.listMine] Acesso negado: usuario nao e professor.');
+      return reply.code(403).send({ error: 'FORBIDDEN', message: 'Apenas professores podem acessar Monitores de IA.' });
+    }
 
     try {
       const monitors = await this.service.findAllOwnedByUserId(request.user.id);
+      console.log('[MonitorController.listMine] Monitores encontrados:', {
+        userId: request.user.id,
+        count: monitors.length,
+        monitorIds: monitors.map((m: any) => m.id),
+      });
       return reply.code(200).send({ data: monitors });
     } catch (error) {
-      console.log('Falha ao listar Monitores de IA', { event: 'monitor.list_failed', requestId: request.id, userId: request.user.id, error });
+      console.log('[MonitorController.listMine] Erro ao listar Monitores:', { requestId: request.id, userId: request.user.id, error });
       return reply.code(500).send({ error: 'MONITOR_LIST_FAILED', message: 'Nao foi possivel listar os Monitores de IA.' });
     }
   }
 
   async getMine(request: FastifyRequest<{ Params: { monitorId: string } }>, reply: FastifyReply) {
     if (!request.user) return reply.code(401).send({ error: 'UNAUTHENTICATED', message: 'Sessao de usuario obrigatoria.' });
-    if (request.user.role !== 'teacher') return reply.code(403).send({ error: 'FORBIDDEN', message: 'Apenas professores podem acessar Monitores de IA.' });
+    const isTeacher = ['teacher', 'professor', 'admin'].includes(request.user.role?.toLowerCase() || '');
+    if (!isTeacher) return reply.code(403).send({ error: 'FORBIDDEN', message: 'Apenas professores podem acessar Monitores de IA.' });
 
     const params = monitorIdParamsSchema.safeParse(request.params);
     if (!params.success) return reply.code(400).send({ error: 'VALIDATION_ERROR', message: 'Identificador de monitor invalido.' });
@@ -149,6 +185,33 @@ export class MonitorController {
       return reply.code(200).send({ data: monitor });
     } catch (error) {
       return reply.code(500).send({ error: 'DELETE_TOPIC_FAILED', message: 'Falha ao remover topico.' });
+    }
+  }
+
+  async update(request: FastifyRequest<{ Params: { monitorId: string } }>, reply: FastifyReply) {
+    if (!request.user) return reply.code(401).send({ error: 'UNAUTHENTICATED', message: 'Sessao de usuario obrigatoria.' });
+    if (request.user.role !== 'teacher') return reply.code(403).send({ error: 'FORBIDDEN', message: 'Apenas professores podem alterar Monitores de IA.' });
+
+    const params = monitorIdParamsSchema.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: 'VALIDATION_ERROR', message: 'Identificador de monitor invalido.' });
+
+    const parsed = updateMonitorSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: 'VALIDATION_ERROR',
+        message: 'Dados do Monitor de IA invalidos.',
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+
+    try {
+      const monitor = await this.service.update(request.user.id, params.data.monitorId, parsed.data);
+      if (!monitor) return reply.code(404).send({ error: 'MONITOR_NOT_FOUND', message: 'Monitor de IA nao encontrado.' });
+
+      return reply.code(200).send({ data: monitor });
+    } catch (error) {
+      console.log('Falha ao atualizar Monitor de IA', { event: 'monitor.update_failed', requestId: request.id, userId: request.user.id, monitorId: params.data.monitorId, error });
+      return reply.code(500).send({ error: 'MONITOR_UPDATE_FAILED', message: 'Nao foi possivel atualizar o Monitor de IA.' });
     }
   }
 }

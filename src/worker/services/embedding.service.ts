@@ -7,8 +7,8 @@ import {
   markChunksEmbeddingProcessing,
   saveChunkEmbeddings,
 } from '../../repositories/document-worker.repository.js';
+import { DOCUMENT_EMBEDDING_VERSION } from './chunk.service.js';
 
-const EMBEDDING_VERSION = 'hierarchical-block-tokenized-v1';
 const EMBEDDING_MAX_RETRIES = 5;
 
 function sleep(ms: number) {
@@ -100,7 +100,7 @@ export class EmbeddingService {
           id: chunk.id,
           embedding: embeddings[index]!,
           embeddingModel: env.OPENROUTER_EMBEDDING_MODEL,
-          embeddingVersion: EMBEDDING_VERSION,
+          embeddingVersion: DOCUMENT_EMBEDDING_VERSION,
         })));
         batch.forEach((chunk) => persistedChunkIds.add(chunk.id));
         processedCount += batch.length;

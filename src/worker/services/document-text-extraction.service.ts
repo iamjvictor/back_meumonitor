@@ -6,13 +6,15 @@ import {
   TextNormalizationService,
 } from './text-normalization.service.js';
 
-const EXTRACTION_VERSION = 'pdf-parse-v3-page-structural';
+const EXTRACTION_VERSION = 'pdf-layout-v2-column-aware';
 const MIN_CHARS_PER_PAGE = 80;
 const REPLACEMENT_CHARACTER = '\uFFFD';
 
 type ParsedPdfPage = {
   num: number;
   text: string;
+  hasImages?: boolean;
+  imageCount?: number;
 };
 
 export type ParsedPdfText = {
@@ -70,9 +72,11 @@ function assessQuality(parsedPdf: ParsedPdfText, documentSizeBytes: number) {
   return {
     quality,
     qualityDetails: {
-      parser: 'pdf-parse',
-      parserVersion: '2.4.5',
-      extractionMethod: pages.length > 0 ? 'pdf-parse-pages' : 'pdf-parse-aggregate',
+      parser: 'pdfjs-layout-adapter',
+      parserVersion: '5.x-transitive',
+        extractionMethod: pages.length > 0 ? 'pdf-layout-pages-columns' : 'pdf-layout-aggregate',
+        pagesWithImages: pages.filter((page) => page.hasImages === true).map((page) => page.num),
+        imageCount: pages.reduce((total, page) => total + (page.imageCount ?? 0), 0),
       fallbackPageMarkersUsed: false,
       documentSizeBytes,
       textChars: rawContent.length,
@@ -107,6 +111,7 @@ export class DocumentTextExtractionService {
         pageNumber: page.num,
         rawContent: page.text,
         normalizedContent: this.normalizationService.normalize(page.text, { repeatedPageLines }).normalizedContent,
+        hasImages: page.hasImages ?? null,
       }))
       : [];
     const normalizedContent = normalizedPages.map((page) => page.normalizedContent).join('\n\n').trim();
@@ -142,7 +147,7 @@ export class DocumentTextExtractionService {
         pageNumber: page.pageNumber,
         rawContent: page.rawContent,
         normalizedContent: page.normalizedContent || null,
-        hasImages: null,
+        hasImages: page.hasImages ?? null,
         charStart: offsets[index]?.charStart ?? null,
         charEnd: offsets[index]?.charEnd ?? null,
       })),

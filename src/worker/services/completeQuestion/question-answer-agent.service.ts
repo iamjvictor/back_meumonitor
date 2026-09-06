@@ -7,6 +7,7 @@ import {
 import { formatAlternatives } from './question-alternatives-agent.service.js';
 import { QuestionCompletionRequestService } from './question-completion-request.service.js';
 import type { CompletionGeneration, QuestionAgentFailure, QuestionAlternative, QuestionCompletionInput } from './question-completion.types.js';
+import { buildQuestionAgentContext } from '../question-context-pack.service.js';
 
 export class QuestionAnswerAgentService {
   constructor(
@@ -32,7 +33,12 @@ export class QuestionAnswerAgentService {
       };
     }
 
-    const rag = await this.retrieveDocumentContext(input, alternatives);
+    const rag = input.skipDocumentRag
+      ? { context: '', used: false }
+      : await this.retrieveDocumentContext(input, alternatives);
+    const sourceContext = input.contextPack
+      ? buildQuestionAgentContext(input.contextPack, 'CORRECT_ANSWER')
+      : input.sourceContext;
     const response = await this.requestService.request({
       task: 'question_answer',
       schema: answerOnlyJsonSchema,
@@ -44,7 +50,7 @@ export class QuestionAnswerAgentService {
         },
         {
           role: 'user',
-          content: `Enunciado:\n${input.statement}\n\nAlternativas:\n${formatAlternatives(alternatives)}\n\nContexto documental recuperado:\n${rag.context || '(nenhum trecho adicional encontrado)'}`,
+          content: `Enunciado:\n${input.statement}\n\nAlternativas:\n${formatAlternatives(alternatives)}\n\nTrechos de evidencia da origem:\n${sourceContext.slice(0, 12000) || '(nenhum)'}\n\nContexto documental recuperado por RAG:\n${rag.context || '(nenhum trecho adicional encontrado)'}`,
         },
       ],
     });
@@ -81,7 +87,7 @@ export class QuestionAnswerAgentService {
       generation: {
         generationType: 'CORRECT_ANSWER',
         model: response.model,
-        inputSnapshot: { statement: input.statement, alternatives, ragContext: rag.context },
+        inputSnapshot: { statement: input.statement, alternatives, sourceContext, ragContext: rag.context },
         outputSnapshot: response.data,
         confidence: rag.used ? 0.85 : 0.7,
       },

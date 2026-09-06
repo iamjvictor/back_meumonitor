@@ -75,6 +75,77 @@ export class TeacherController {
     }
   }
 
+  async updateMyProfile(request: FastifyRequest, reply: FastifyReply) {
+    const startedAt = Date.now();
+
+    if (!request.user) {
+      console.log('Atualizacao de perfil negada: sem sessao', {
+        event: 'teacher.profile_update_unauthenticated',
+        requestId: request.id,
+      });
+      return reply.code(401).send({ error: 'UNAUTHENTICATED', message: 'Sessao de usuario obrigatoria.' });
+    }
+
+    if (request.user.role !== 'teacher') {
+      console.log('Atualizacao de perfil negada: role invalida', {
+        event: 'teacher.profile_update_forbidden',
+        requestId: request.id,
+        userId: request.user.id,
+        role: request.user.role,
+      });
+      return reply.code(403).send({ error: 'FORBIDDEN', message: 'Apenas contas de professor podem atualizar este perfil.' });
+    }
+
+    const input = (request.body as any) || {};
+    const payloadKeys = Object.keys(input);
+
+    console.log('Requisicao de atualizacao de perfil recebida', {
+      event: 'teacher.profile_update_received',
+      requestId: request.id,
+      userId: request.user.id,
+      method: request.method,
+      payloadKeys,
+      fullName: input.fullName,
+      username: input.username,
+      area: input.area,
+      hasAvatar: Boolean(input.avatarUrl),
+      hasBanner: Boolean(input.bannerUrl),
+    });
+
+    try {
+      const teacher = await this.service.updateMyProfile(request.user, input);
+
+      console.log('Perfil do professor atualizado com sucesso no backend', {
+        event: 'teacher.profile_update_success',
+        requestId: request.id,
+        userId: request.user.id,
+        teacherId: teacher?.id,
+        durationMs: Date.now() - startedAt,
+      });
+
+      return reply.send({
+        message: 'Perfil atualizado com sucesso',
+        data: teacher,
+        teacher,
+      });
+    } catch (err: any) {
+      console.error('Falha ao atualizar perfil do professor', {
+        event: 'teacher.profile_update_failed',
+        requestId: request.id,
+        userId: request.user.id,
+        errorName: err?.name,
+        errorMessage: err?.message,
+        stack: err?.stack,
+        durationMs: Date.now() - startedAt,
+      });
+
+      return reply.code(400).send({
+        error: 'UPDATE_PROFILE_FAILED',
+        message: err.message || 'Erro ao processar atualizacao de perfil.',
+      });
+    }
+  }
+
   async getPublicProfile(request: FastifyRequest<{ Params: { teacherSlug: string } }>, reply: FastifyReply) {
     const { teacherSlug } = request.params;
 

@@ -4,6 +4,7 @@ import {
 } from '../../schemas/question-completion.schema.js';
 import { QuestionCompletionRequestService } from './question-completion-request.service.js';
 import type { CompletionGeneration, QuestionAgentFailure, QuestionAlternative, QuestionCompletionInput } from './question-completion.types.js';
+import { buildQuestionAgentContext } from '../question-context-pack.service.js';
 
 export class QuestionAlternativesAgentService {
   constructor(private readonly requestService = new QuestionCompletionRequestService()) {}
@@ -15,9 +16,17 @@ export class QuestionAlternativesAgentService {
     failure?: QuestionAgentFailure;
   }> {
     const sourceAlternatives = normalizeAlternatives(input.alternatives);
+    const sourceContext = input.contextPack
+      ? buildQuestionAgentContext(input.contextPack, 'ALTERNATIVES')
+      : input.sourceContext;
     if (sourceAlternatives.length === 5) {
       return { alternatives: sourceAlternatives, generated: false };
     }
+
+    const conversionRequired = sourceAlternatives.length === 0;
+    const systemInstruction = conversionRequired
+      ? 'CONVERSAO OBRIGATORIA PARA MULTIPLA ESCOLHA: o documento nao forneceu alternativas confiaveis. Transforme o exercicio em uma unica questao objetiva de multipla escolha, preservando o tema, os dados, a pergunta principal e o nivel de dificuldade. Se houver subitens (a, b, c...), use-os apenas como dados para formular uma pergunta principal; nao os transforme em alternativas. Crie exatamente cinco alternativas A, B, C, D e E, com uma unica resposta correta. Nao invente dados ausentes e nao misture o texto de outra questao. O campo text de cada alternativa deve conter somente a resposta/opcao, sem rotulos, cabecalhos ou rodapes. Nao inclua explicacao, gabarito ou texto fora do JSON.'
+      : 'Crie exatamente cinco alternativas A, B, C, D e E. Preserve o conteudo e a ordem das alternativas documentais, completando somente as faltantes. O campo text de cada alternativa nao pode conter rotulos como "A)", "b)" ou a letra da proxima alternativa, nem cabecalhos/rodapes do documento. Nao inclua explicacao, gabarito ou texto fora do JSON.';
 
     const response = await this.requestService.request({
       task: 'question_alternatives',
@@ -26,11 +35,11 @@ export class QuestionAlternativesAgentService {
       messages: [
         {
           role: 'system',
-          content: 'Crie exatamente cinco alternativas A, B, C, D e E. Preserve o conteudo e a ordem das alternativas documentais, completando somente as faltantes. O campo text de cada alternativa nao pode conter rotulos como "A)", "b)" ou a letra da proxima alternativa, nem cabecalhos/rodapes do documento. Nao inclua explicacao, gabarito ou texto fora do JSON.',
+          content: systemInstruction,
         },
         {
           role: 'user',
-          content: `Enunciado:\n${input.statement}\n\nAlternativas documentais:\n${formatAlternatives(sourceAlternatives)}`,
+          content: `Numero da questao: ${input.questionNumber || '(desconhecido)'}\nModo: ${conversionRequired ? 'CONVERTIBLE_TO_MULTIPLE_CHOICE' : 'COMPLETION_OF_SOURCE_ALTERNATIVES'}\n\nEnunciado:\n${input.statement}\n\nAlternativas documentais:\n${formatAlternatives(sourceAlternatives)}\n\nTrechos de evidencia do documento (use somente para completar esta questao):\n${sourceContext.slice(0, 7000) || '(nenhum)'}`,
         },
       ],
     });
@@ -58,7 +67,13 @@ export class QuestionAlternativesAgentService {
       generation: {
         generationType: 'ALTERNATIVES',
         model: response.model,
-        inputSnapshot: { statement: input.statement, sourceAlternatives },
+        inputSnapshot: {
+          statement: input.statement,
+          questionNumber: input.questionNumber,
+          sourceAlternatives,
+          sourceContext,
+          conversionRequired,
+        },
         outputSnapshot: response.data,
         confidence: 0.8,
       },

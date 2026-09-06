@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { flashcardReviewSchema, questionReviewSchema } from '../models/content-review.model.js';
 import {
+  createQuestion,
   listDocumentsForMonitor,
   listFlashcardsForMonitor,
   listQuestionsForMonitor,
@@ -41,17 +42,71 @@ export class ContentReviewController {
     }
   }
 
+  async createQuestion(request: FastifyRequest<{ Params: Params; Body: unknown }>, reply: FastifyReply) {
+    console.log('[ContentReviewController] POST /:monitorId/questions - Incoming request:', {
+      params: request.params,
+      userId: request.user?.id,
+      body: request.body,
+    });
+
+    if (!request.user) {
+      console.warn('[ContentReviewController] Unauthorized attempt to create question');
+      return reply.code(401).send({ error: 'UNAUTHENTICATED' });
+    }
+
+    const monitorId = request.params.monitorId;
+    if (!monitorId) {
+      console.warn('[ContentReviewController] Missing monitorId in params');
+      return reply.code(400).send({ error: 'MISSING_MONITOR_ID' });
+    }
+
+    const parsed = questionReviewSchema.safeParse(request.body);
+    if (!parsed.success) {
+      console.warn('[ContentReviewController] Validation failed:', parsed.error.flatten().fieldErrors);
+      return reply.code(400).send({ error: 'VALIDATION_ERROR', details: parsed.error.flatten().fieldErrors });
+    }
+
+    const bodyObj = (request.body || {}) as any;
+    const text = parsed.data.text || bodyObj.text || bodyObj.prompt;
+    if (!text || !text.trim()) {
+      console.warn('[ContentReviewController] Missing question text/prompt');
+      return reply.code(400).send({ error: 'TEXT_REQUIRED', message: 'O enunciado da questão é obrigatório.' });
+    }
+
+    try {
+      const result = await createQuestion(request.user.id, monitorId, {
+        ...parsed.data,
+        text,
+      });
+      console.log('[ContentReviewController] Question created successfully:', result.id);
+      return reply.status(201).send({ data: result });
+    } catch (error: any) {
+      console.error('[ContentReviewController] Error creating question:', error);
+      return reply.code(500).send({ error: error.message || 'FAILED_TO_CREATE_QUESTION' });
+    }
+  }
+
   async question(request: FastifyRequest<{ Params: Params; Body: unknown }>, reply: FastifyReply) {
+    console.log('[ContentReviewController] PUT/PATCH /questions - Incoming request:', {
+      params: request.params,
+      userId: request.user?.id,
+      body: request.body,
+    });
     if (!request.user) return reply.code(401).send({ error: 'UNAUTHENTICATED' });
     const parsed = questionReviewSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'VALIDATION_ERROR', details: parsed.error.flatten().fieldErrors });
+    if (!parsed.success) {
+      console.warn('[ContentReviewController] Validation failed on update:', parsed.error.flatten().fieldErrors);
+      return reply.code(400).send({ error: 'VALIDATION_ERROR', details: parsed.error.flatten().fieldErrors });
+    }
     try {
       const questionId = request.params.questionId;
       if (!questionId) return reply.code(400).send({ error: 'MISSING_QUESTION_ID' });
       const result = await reviewQuestion(request.user.id, request.params.monitorId || null, questionId, parsed.data);
       if (!result) return reply.code(404).send({ error: 'QUESTION_NOT_FOUND' });
+      console.log('[ContentReviewController] Question updated successfully:', questionId);
       return reply.send({ data: result });
     } catch (error) {
+      console.error('[ContentReviewController] Error updating question:', error);
       if (error instanceof Error && [
         'QUESTION_REQUIRES_ANSWER_KEY',
         'QUESTION_REQUIRES_PRIMARY_TOPIC',

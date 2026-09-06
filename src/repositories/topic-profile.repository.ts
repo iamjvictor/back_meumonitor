@@ -8,12 +8,22 @@ export async function findTopicProfileContext(topicId: string) {
       id: true,
       name: true,
       definition: true,
+      classificationGuidance: true,
       aiDefinition: true,
       subjectId: true,
       subject: {
         select: {
           monitorId: true,
           monitor: { select: { teacherId: true } },
+          topics: {
+            select: {
+              id: true,
+              name: true,
+              definition: true,
+              classificationGuidance: true,
+            },
+            orderBy: { position: 'asc' },
+          },
         },
       },
     },
@@ -27,12 +37,22 @@ export async function findTopicProfileContextsForSubject(subjectId: string) {
       id: true,
       name: true,
       definition: true,
+      classificationGuidance: true,
       aiDefinition: true,
       subjectId: true,
       subject: {
         select: {
           monitorId: true,
           monitor: { select: { teacherId: true } },
+          topics: {
+            select: {
+              id: true,
+              name: true,
+              definition: true,
+              classificationGuidance: true,
+            },
+            orderBy: { position: 'asc' },
+          },
         },
       },
     },

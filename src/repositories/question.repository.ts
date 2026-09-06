@@ -43,7 +43,7 @@ type QuestionSourceInput = {
 };
 
 type QuestionAiGenerationInput = {
-  generationType: 'ALTERNATIVES' | 'CORRECT_ANSWER' | 'EXPLANATION' | 'CATEGORY' | 'DIFFICULTY' | 'FULL_ENRICHMENT';
+  generationType: 'ALTERNATIVES' | 'CORRECT_ANSWER' | 'EXPLANATION' | 'CATEGORY' | 'CORRECTION' | 'NORMALIZATION' | 'DIFFICULTY' | 'FULL_ENRICHMENT';
   model: string;
   promptVersion?: string | null;
   inputSnapshot: Prisma.InputJsonValue;
@@ -73,6 +73,15 @@ export async function findQuestionExtractionData(documentId: string) {
     select: {
       id: true,
       topicId: true,
+      textExtractions: {
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        select: {
+          pages: {
+            select: { pageNumber: true, hasImages: true },
+          },
+        },
+      },
       topicLinks: {
         select: {
           topic: {
@@ -104,7 +113,9 @@ export async function findQuestionExtractionData(documentId: string) {
         orderBy: { chunkIndex: 'asc' },
       },
       blocks: {
-        where: { status: { not: 'FAILED' }, isComplete: true },
+        // Incomplete question blocks are evidence for AI reconstruction. They
+        // must remain available alongside their persisted chunks.
+        where: { status: { not: 'FAILED' } },
         select: {
           id: true,
           blockIndex: true,
@@ -133,7 +144,18 @@ export async function findQuestionExtractionData(documentId: string) {
 
   if (!document) return null;
 
-  return document;
+  const pages = document.textExtractions[0]?.pages ?? [];
+  const imagePages = new Set(pages.filter((page) => page.hasImages === true).map((page) => page.pageNumber));
+  const chunks = document.chunks.map((chunk) => {
+    const start = chunk.block?.pageStart;
+    const end = chunk.block?.pageEnd ?? start;
+    const pageHasImages = start !== null && start !== undefined && end !== null && end !== undefined
+      ? Array.from({ length: Math.max(0, end - start + 1) }, (_, index) => start + index).some((page) => imagePages.has(page))
+      : null;
+    return { ...chunk, pageHasImages };
+  });
+
+  return { ...document, chunks };
 }
 
 export async function removeUnreviewedQuestionsForDocument(documentId: string) {
@@ -241,6 +263,7 @@ export async function saveQuestion(input: {
   statementOrigin?: 'SOURCE_DOCUMENT' | 'RECONSTRUCTED_FROM_DOCUMENT' | 'AI_GENERATED' | 'TEACHER_EDITED' | 'TEACHER_CREATED';
   statementConfidence?: number | null;
   alternativesOrigin?: 'SOURCE_DOCUMENT' | 'RECONSTRUCTED_FROM_DOCUMENT' | 'AI_GENERATED' | 'TEACHER_EDITED' | 'TEACHER_CREATED' | null;
+  alternativesConfidence?: number | null;
   correctAnswer: string | null;
   correctAnswerOrigin?: 'SOURCE_DOCUMENT' | 'EXTERNAL_SOURCE' | 'TEACHER' | 'AI_GENERATED';
   correctAnswerConfidence?: number | null;
@@ -280,6 +303,7 @@ export async function saveQuestion(input: {
         statementOrigin: input.statementOrigin ?? 'SOURCE_DOCUMENT',
         statementConfidence: input.statementConfidence ?? null,
         alternativesOrigin: input.alternativesOrigin ?? (input.alternatives.length > 0 ? 'SOURCE_DOCUMENT' : null),
+        alternativesConfidence: input.alternativesConfidence ?? null,
         correctAnswer: input.correctAnswer,
         correctAnswerOrigin: input.correctAnswerOrigin,
         correctAnswerConfidence: input.correctAnswerConfidence ?? null,
@@ -340,17 +364,29 @@ export async function saveQuestion(input: {
     }
 
     if (input.aiGenerations?.length) {
-      await transaction.questionAiGeneration.createMany({
-        data: input.aiGenerations.map((generation) => ({
+      try {
+        await transaction.questionAiGeneration.createMany({
+          data: input.aiGenerations.map((generation) => ({
+            questionId: question.id,
+            generationType: generation.generationType,
+            model: generation.model,
+            promptVersion: generation.promptVersion ?? null,
+            inputSnapshot: generation.inputSnapshot,
+            outputSnapshot: generation.outputSnapshot,
+            confidence: generation.confidence ?? null,
+          })),
+        });
+      } catch (error) {
+        // A generation log is observability data. It must never roll back the
+        // question itself, especially while a deployment is catching up with
+        // a newly introduced enum value such as CORRECTION.
+        console.log('Trilha de geração da IA não foi persistida; questão será mantida', {
+          event: 'monitor.question_ai_generation_persistence_failed_non_blocking',
           questionId: question.id,
-          generationType: generation.generationType,
-          model: generation.model,
-          promptVersion: generation.promptVersion ?? null,
-          inputSnapshot: generation.inputSnapshot,
-          outputSnapshot: generation.outputSnapshot,
-          confidence: generation.confidence ?? null,
-        })),
-      });
+          generationTypes: input.aiGenerations.map((generation) => generation.generationType),
+          error,
+        });
+      }
     }
 
     if (input.embedding) {

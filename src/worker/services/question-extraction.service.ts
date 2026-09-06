@@ -8,7 +8,13 @@ import { OpenRouterClient } from '../client/openrouter.client.js';
 import { QuestionCompletionService } from './completeQuestion/question-completion.service.js';
 import type { CompletionGeneration, QuestionAgentFailure } from './completeQuestion/question-completion.types.js';
 import { QuestionCategoryAgentService } from './completeQuestion/question-category-agent.service.js';
+import { QuestionQualityReviewAgentService } from './completeQuestion/question-quality-review-agent.service.js';
+import { QuestionQualityCorrectionAgentService } from './completeQuestion/question-quality-correction-agent.service.js';
+import { QuestionQualityNormalizationAgentService } from './completeQuestion/question-quality-normalization-agent.service.js';
+import { QuestionSourceReconstructionAgentService } from './completeQuestion/question-source-reconstruction-agent.service.js';
+import type { QuestionPatch } from './completeQuestion/question-source-reconstruction-agent.service.js';
 import { appendProcessingTimeReport, formatDuration } from './processing-time-report.service.js';
+import { buildQuestionContextPack } from './question-context-pack.service.js';
 import {
   alternativesOnlyJsonSchema,
   alternativesOnlyZodSchema,
@@ -23,8 +29,30 @@ import {
   findPendingQuestionForCompletion,
   findQuestionContext,
   findQuestionExtractionData,
+  findQuestionByTextHash,
+  findSimilarQuestionByEmbedding,
   saveQuestion,
 } from '../../repositories/question.repository.js';
+
+export function resolveQuestionTopic(
+  classifiedTopicId: string | null,
+  allowedTopics: Array<{ id: string }>,
+) {
+  return {
+    topicId: classifiedTopicId ?? allowedTopics[0]?.id ?? null,
+    pendingReview: classifiedTopicId === null && allowedTopics.length === 0,
+  };
+}
+import { markQuestionCandidatePromoted, upsertQuestionSpanCandidate } from '../../repositories/question-candidate.repository.js';
+import {
+  assessQuestionQuality,
+  extractExplicitAnswerFromExplanation,
+  isValidAnswerLabel,
+  requiresMissingFigure,
+  validateQuestionStructure,
+} from './question-quality.service.js';
+import { buildQuestionSourceEvidence } from './question-source-context.service.js';
+import { validateQuestionStatementEvidence } from './question-statement-evidence.service.js';
 
 const CHUNKS_PER_GROUP = 3;
 const MAX_PARALLEL_GROUPS = 3;
@@ -80,6 +108,7 @@ export type ExtractionChunk = {
   charStart?: number | null;
   charEnd?: number | null;
   block?: { pageStart: number | null; pageEnd: number | null } | null;
+  pageHasImages?: boolean | null;
 };
 
 export type QuestionTopicInput = {
@@ -120,10 +149,10 @@ type CandidateCompletion = {
   generations?: CompletionGeneration[];
   answerUsedDocumentRag?: boolean;
   answerDecisionSource?: 'SOURCE_DOCUMENT' | 'DOCUMENT_RAG' | 'MODEL_INFERENCE' | null;
-  completionFailedAgents?: Array<'ALTERNATIVES' | 'CORRECT_ANSWER' | 'EXPLANATION'>;
+  completionFailedAgents?: Array<'ALTERNATIVES' | 'CORRECT_ANSWER' | 'EXPLANATION' | 'CORRECTION' | 'NORMALIZATION'>;
   completionFailures?: QuestionAgentFailure[];
   missingFields: string[];
-  completenessStatus: 'COMPLETE_FROM_SOURCE' | 'COMPLETE_WITH_AI' | 'MISSING_ALTERNATIVES' | 'MISSING_ANSWER' | 'MISSING_EXPLANATION';
+  completenessStatus: 'COMPLETE_FROM_SOURCE' | 'COMPLETE_WITH_AI' | 'MISSING_ALTERNATIVES' | 'MISSING_ANSWER' | 'MISSING_EXPLANATION' | 'INVALID_FRAGMENT';
 };
 
 const alternativeSchema = z.object({
@@ -169,6 +198,16 @@ export type ExtractedQuestion = z.infer<typeof extractedQuestionSchema> & {
   };
 };
 
+type CandidatePromotionDecision = {
+  plausibleCandidate: boolean;
+  statementEvidence: ReturnType<typeof validateQuestionStatementEvidence>;
+  sourceStructure: ReturnType<typeof validateQuestionStructure>;
+  visualPending: boolean;
+  completionBlocked: boolean;
+  candidateStatus: 'BLOCKED' | 'REVIEW_REQUIRED' | 'VISUAL_PENDING' | 'READY_FOR_COMPLETION';
+  promotionReasons: string[];
+};
+
 export type QuestionExtractionOutput = {
   questions: ExtractedQuestion[];
   metadata: {
@@ -179,6 +218,10 @@ export type QuestionExtractionOutput = {
     questionsSaved: number;
     duplicatesSkipped: number;
     invalidTopicsSkipped: number;
+    candidatesPromoted: number;
+    candidatesRetained: number;
+    questionsWithMissingFields: number;
+    topicFallbacks: number;
   };
 };
 
@@ -232,6 +275,10 @@ export class QuestionExtractionService {
     private readonly client = new OpenRouterClient(),
     private readonly completionService = new QuestionCompletionService(),
     private readonly categoryAgent = new QuestionCategoryAgentService(),
+    private readonly qualityReviewAgent = new QuestionQualityReviewAgentService(),
+    private readonly qualityCorrectionAgent = new QuestionQualityCorrectionAgentService(),
+    private readonly qualityNormalizationAgent = new QuestionQualityNormalizationAgentService(),
+    private readonly sourceReconstructionAgent = new QuestionSourceReconstructionAgentService(),
   ) {}
 
   async processDocument(documentId: string) {
@@ -323,6 +370,10 @@ export class QuestionExtractionService {
         output.metadata.questionsSaved += fallbackOutput.metadata.questionsSaved;
         output.metadata.duplicatesSkipped += fallbackOutput.metadata.duplicatesSkipped;
         output.metadata.invalidTopicsSkipped += fallbackOutput.metadata.invalidTopicsSkipped;
+        output.metadata.candidatesPromoted += fallbackOutput.metadata.candidatesPromoted;
+        output.metadata.candidatesRetained += fallbackOutput.metadata.candidatesRetained;
+        output.metadata.questionsWithMissingFields += fallbackOutput.metadata.questionsWithMissingFields;
+        output.metadata.topicFallbacks += fallbackOutput.metadata.topicFallbacks;
       }
 
       console.log('Agente de questoes finalizou o documento', {
@@ -446,9 +497,11 @@ export class QuestionExtractionService {
     const topicMap = new Map(categories.map((topic) => [topic.id, topic]));
     let duplicatesSkipped = 0;
     let invalidTopicsSkipped = 0;
+    let candidatesPromoted = 0;
+    let candidatesRetained = 0;
+    let questionsWithMissingFields = 0;
+    let topicFallbacks = 0;
     const savedQuestions: ExtractedQuestion[] = [];
-    const candidateEmbeddings = await this.generateQuestionEmbeddings(candidates);
-
     console.log('Persistindo candidatas com concorrencia controlada', {
       event: 'monitor.question_candidates_persistence_started',
       documentId: knowledgeBaseId,
@@ -474,24 +527,101 @@ export class QuestionExtractionService {
         ].filter(Boolean).join('\n'));
       };
 
-      if (!isPlausibleQuestionCandidate(candidate)) {
-        console.log('Questao ignorada: candidata parece fragmento, formula ou alternativa isolada', {
-          event: 'monitor.question_invalid_fragment_skipped',
-          sourceBlockId: candidate.sourceBlockId ?? null,
-          sourceChunkIndexes: candidate.sourceChunkIndexes,
-          textPreview: candidate.text.slice(0, 120),
-        });
-        await reportQuestionResult('DESCARTADA: fragmento invalido');
+      const sourceChunks = orderedChunks.filter((chunk) => candidate.sourceChunkIndexes.includes(chunk.chunkIndex));
+      const visualEvidenceAvailable = sourceChunks.some((chunk) => chunk.pageHasImages === true);
+      const answerSourceChunks = orderedChunks.filter((chunk) => candidate.answerSourceChunkIndexes?.includes(chunk.chunkIndex));
+      const explanationSourceChunks = orderedChunks.filter((chunk) => candidate.explanationSourceChunkIndexes?.includes(chunk.chunkIndex));
+      if (sourceChunks.length === 0) {
+        await reportQuestionResult('DESCARTADA: nenhum chunk de origem encontrado');
         return;
       }
-      const normalizedText = normalizeQuestionText(candidate.text);
-      const textHash = createHash('sha256').update(normalizedText).digest('hex');
-      let questionTopicId = candidate.topicId && topicMap.has(candidate.topicId)
-        ? candidate.topicId
-        : null;
+
+      const sourceBlockId = candidate.sourceBlockId ?? sourceChunks.find((chunk) => chunk.blockId)?.blockId ?? null;
+      const normalizedCandidateText = normalizeQuestionText(candidate.text);
+      let sourceKey = buildQuestionSourceKey({
+        documentId: sourceChunks[0]!.documentId,
+        sourceBlockId,
+        questionNumber: candidate.questionNumber ?? null,
+        statement: normalizedCandidateText,
+      });
+      const promotionDecision = evaluateQuestionCandidatePromotion({ candidate, sourceChunks });
+      const {
+        plausibleCandidate,
+        statementEvidence,
+        visualPending,
+        completionBlocked,
+        promotionReasons,
+        candidateStatus,
+      } = promotionDecision;
+      let sourceStructure = promotionDecision.sourceStructure;
+      const persistedCandidate = await questionPersistenceSemaphore.run(() => upsertQuestionSpanCandidate({
+        documentId: sourceChunks[0]!.documentId,
+        documentBlockId: sourceBlockId,
+        sourceKey,
+        questionNumber: candidate.questionNumber ?? null,
+        chunkIds: sourceChunks.map((chunk) => chunk.id),
+        pageStart: sourceChunks[0]?.block?.pageStart ?? null,
+        pageEnd: sourceChunks.at(-1)?.block?.pageEnd ?? null,
+        charStart: sourceChunks[0]?.charStart ?? null,
+        charEnd: sourceChunks.at(-1)?.charEnd ?? null,
+        statement: candidate.text,
+        alternatives: candidate.alternatives,
+        correctAnswer: candidate.correctAnswer,
+        explanation: candidate.explanation,
+        spanStatus: completionBlocked ? visualPending ? 'VISUAL_PENDING' : 'REVIEW_REQUIRED' : 'READY_FOR_COMPLETION',
+        visualStatus: visualPending ? 'PENDING_EXTRACTION' : 'NOT_REQUIRED',
+        candidateStatus,
+        structuralState: sourceStructure.processingState,
+        promotionReasons,
+        confidence: completionBlocked ? 0.95 : 1,
+        evidence: { statementEvidence, sourceChunkIndexes: candidate.sourceChunkIndexes, visualEvidenceAvailable },
+        metadata: { alternativesCount: candidate.alternatives.length, sourceStructureReasons: sourceStructure.reasons },
+      }));
+      if (completionBlocked) {
+        candidatesRetained += 1;
+        console.log('Candidata retida antes dos agentes de conclusao', {
+          event: 'monitor.question_candidate_not_promoted',
+          sourceKey,
+          candidateStatus,
+          promotionReasons,
+        });
+        await reportQuestionResult(`CANDIDATA RETIDA: ${promotionReasons.join(', ') || sourceStructure.processingState}`);
+        return;
+      }
+      await questionPersistenceSemaphore.run(() => markQuestionCandidatePromoted(sourceKey));
+      candidatesPromoted += 1;
+      const boundaryValidation = {
+        decision: 'CONFIRMED' as const,
+        confidence: 1,
+        reason: 'Promocao deterministica: enunciado ancorado e estrutura de multipla escolha valida.',
+        relevantChunkIndexes: candidate.sourceChunkIndexes,
+        failure: null,
+      };
+      const boundaryBlocked = false;
+      const blockedByMissingFigure = false;
+      const candidateForProcessing = candidate;
+      let structurallyInvalid: boolean = completionBlocked;
+      let normalizedText = normalizeQuestionText(candidateForProcessing.text);
+      let textHash = createHash('sha256').update(normalizedText).digest('hex');
+      // O tópico selecionado no upload é a fonte de verdade da questão. Ele
+      // deve sobreviver mesmo quando a questão for salva incompleta para
+      // revisão; a falha de completamento não torna o tópico desconhecido.
+      let questionTopicId = fixedTopicId && topicMap.has(fixedTopicId)
+        ? fixedTopicId
+        : candidate.topicId && topicMap.has(candidate.topicId)
+          ? candidate.topicId
+          : null;
+      if (!questionTopicId) topicFallbacks += 1;
       let relatedTopics = candidate.relatedTopics.filter(({ topicId, confidence }) => (
         topicMap.has(topicId) && topicId !== questionTopicId && confidence > 0.5
       ));
+      if (structurallyInvalid && !fixedTopicId) {
+        questionTopicId = null;
+        relatedTopics = [];
+      }
+      if (!questionTopicId && !structurallyInvalid) {
+        questionTopicId = resolveQuestionTopic(null, categories).topicId;
+      }
       let topicClassificationPending = !questionTopicId;
       if (topicClassificationPending) {
         console.log('Questao sem topico principal sera salva para revisao', {
@@ -503,48 +633,299 @@ export class QuestionExtractionService {
         });
       }
 
-      const sourceChunks = orderedChunks.filter((chunk) => candidate.sourceChunkIndexes.includes(chunk.chunkIndex));
-      const answerSourceChunks = orderedChunks.filter((chunk) => candidate.answerSourceChunkIndexes?.includes(chunk.chunkIndex));
-      const explanationSourceChunks = orderedChunks.filter((chunk) => candidate.explanationSourceChunkIndexes?.includes(chunk.chunkIndex));
-      if (sourceChunks.length === 0) {
-        await reportQuestionResult('DESCARTADA: nenhum chunk de origem encontrado');
-        return;
-      }
-      const sourceBlockId = candidate.sourceBlockId ?? sourceChunks.find((chunk) => chunk.blockId)?.blockId ?? null;
-      const sourceKey = buildQuestionSourceKey({
-        documentId: sourceChunks[0]!.documentId,
-        sourceBlockId,
-        questionNumber: candidate.questionNumber ?? null,
-        statement: normalizedText,
-      });
       const existingQuestion = await findPendingQuestionForCompletion(sourceKey);
-
-      const embedding = candidateEmbeddings[index];
+      const embedding = (await this.generateQuestionEmbeddings([candidateForProcessing]))[0];
 
       const candidateForCompletion = existingQuestion
-        ? mergeExistingQuestionFields(candidate, existingQuestion)
-        : candidate;
-      const completed = await this.completeQuestionCandidate(candidateForCompletion, sourceChunks);
-      const completedCandidate = completed.candidate;
-      const completenessStatus = completed.completenessStatus;
-      const categoryResult = fixedTopicId
-        ? { classification: null, failure: undefined }
-        : await this.categoryAgent.classify({
+        ? mergeExistingQuestionFields(candidateForProcessing, existingQuestion)
+        : candidateForProcessing;
+      let completed: CandidateCompletion = completionBlocked
+        ? {
+          candidate: blockedByMissingFigure
+            ? { ...candidateForCompletion, correctAnswer: null, explanation: null }
+            : candidateForCompletion,
+          usedAi: false,
+          generatedAlternatives: false,
+          generatedCorrectAnswer: false,
+          generatedExplanation: false,
+          confidence: 0.95,
+          inputSnapshot: {},
+          outputSnapshot: {},
+          missingFields: [blockedByMissingFigure ? 'missingFigure' : 'structuralValidation'],
+          completenessStatus: 'INVALID_FRAGMENT',
+          generations: [],
+        }
+        : await this.completeQuestionCandidate(candidateForCompletion, sourceChunks, persistedCandidate.id);
+      let completedCandidate = completed.candidate;
+      let completenessStatus = completed.completenessStatus;
+      let sourceContext = buildQuestionSourceEvidence(completedCandidate.text, sourceChunks, orderedChunks);
+      let quality = assessQuestionQuality({
+        text: completedCandidate.text,
+        alternatives: completedCandidate.alternatives,
+        correctAnswer: completedCandidate.correctAnswer,
+        explanation: completedCandidate.explanation,
+        sourceContext,
+        visualEvidenceAvailable,
+        generatedAlternatives: completed.generatedAlternatives,
+        generatedCorrectAnswer: completed.generatedCorrectAnswer,
+        generatedExplanation: completed.generatedExplanation,
+      });
+      let aiReview = completionBlocked ? null : await this.qualityReviewAgent.review({
+        statement: completedCandidate.text,
+        alternatives: completedCandidate.alternatives,
+        correctAnswer: completedCandidate.correctAnswer,
+        explanation: completedCandidate.explanation,
+        sourceContext,
+      });
+      if (aiReview?.reasons.includes('AI_REVIEW_FAILED')) {
+        quality.reasons.push('AI_REVIEW_FAILED');
+      }
+      if (aiReview?.recommendedAction === 'REPROCESS') quality.recommendedAction = 'REPROCESS';
+      else if (aiReview?.recommendedAction === 'CORRECT' && quality.recommendedAction !== 'REPROCESS') quality.recommendedAction = 'CORRECT';
+      if (aiReview) {
+        quality.score = Math.min(quality.score, aiReview.score);
+        quality.severity = aiReview.severity === 'CRITICAL' || quality.severity === 'CRITICAL'
+          ? 'CRITICAL'
+          : aiReview.severity === 'WARNING' || quality.severity === 'WARNING' ? 'WARNING' : 'INFO';
+      }
+
+      const qualityDecisionActions: string[] = [];
+      // Uma unica reconstrução evita ciclos e usa os chunks vizinhos do mesmo PDF.
+      if (!completionBlocked && aiReview?.recommendedAction === 'REPROCESS') {
+        qualityDecisionActions.push('REPROCESS_ATTEMPTED');
+        const reprocessed = await this.sourceReconstructionAgent.reconstruct({
+          questionNumber: completedCandidate.questionNumber ?? null,
+          statement: completedCandidate.text,
+          alternatives: completedCandidate.alternatives,
+          correctAnswer: completedCandidate.correctAnswer,
+          explanation: completedCandidate.explanation,
+          sourceEvidence: sourceContext,
+          convertToMultipleChoice: false,
+        });
+        if (reprocessed.changed && reprocessed.confidence >= 0.7 && reprocessed.recommendedAction !== 'REPROCESS') {
+          const previousCandidate = completedCandidate;
+          const reprocessedCandidate = applyQuestionPatch(completedCandidate, reprocessed.changes);
+          completed = await this.completeQuestionCandidate({
+            ...reprocessedCandidate,
+          }, sourceChunks, persistedCandidate.id);
+          completedCandidate = completed.candidate;
+          completed.usedAi ||= true;
+          completed.generatedAlternatives ||= JSON.stringify(reprocessedCandidate.alternatives) !== JSON.stringify(previousCandidate.alternatives);
+          completed.generatedCorrectAnswer ||= reprocessedCandidate.correctAnswer !== previousCandidate.correctAnswer;
+          completed.generatedExplanation ||= reprocessedCandidate.explanation !== previousCandidate.explanation;
+          completenessStatus = completed.completenessStatus;
+          sourceContext = buildQuestionSourceEvidence(completedCandidate.text, sourceChunks, orderedChunks);
+          qualityDecisionActions.push('REPROCESS_APPLIED');
+          quality = assessQuestionQuality({
+            text: completedCandidate.text,
+            alternatives: completedCandidate.alternatives,
+            correctAnswer: completedCandidate.correctAnswer,
+            explanation: completedCandidate.explanation,
+            sourceContext,
+            visualEvidenceAvailable,
+            generatedAlternatives: completed.generatedAlternatives,
+            generatedCorrectAnswer: completed.generatedCorrectAnswer,
+            generatedExplanation: completed.generatedExplanation,
+          });
+          aiReview = await this.qualityReviewAgent.review({
             statement: completedCandidate.text,
             alternatives: completedCandidate.alternatives,
-            allowedTopics: categories,
+            correctAnswer: completedCandidate.correctAnswer,
+            explanation: completedCandidate.explanation,
+            sourceContext,
           });
-      const categoryClassification = categoryResult.classification;
-      if (fixedTopicId) {
+        } else {
+          qualityDecisionActions.push('REPROCESS_UNRESOLVED');
+        }
+      }
+
+      // CORRECT nunca reutiliza cegamente o gabarito documental: o corretor recebe
+      // a contradição detectada e recalcula a questão antes da nova auditoria.
+      if (!completionBlocked && aiReview?.recommendedAction === 'CORRECT') {
+        qualityDecisionActions.push('CORRECT_ATTEMPTED');
+        const correction = await this.qualityCorrectionAgent.correct({
+          statement: completedCandidate.text,
+          alternatives: completedCandidate.alternatives,
+          correctAnswer: completedCandidate.correctAnswer,
+          explanation: completedCandidate.explanation,
+          reviewReasons: aiReview.reasons,
+          sourceContext,
+        });
+        if (!correction.failure) {
+          const correctedCandidate = applyQuestionPatch(completedCandidate, correction.changes);
+          const alternativesChanged = JSON.stringify(correctedCandidate.alternatives) !== JSON.stringify(completedCandidate.alternatives);
+          const answerChanged = correctedCandidate.correctAnswer !== completedCandidate.correctAnswer;
+          const explanationChanged = correctedCandidate.explanation !== completedCandidate.explanation;
+          completedCandidate = correctedCandidate;
+          const missingFields = [
+            ...(completedCandidate.alternatives.length === 5 ? [] : ['alternatives']),
+            ...(completedCandidate.correctAnswer ? [] : ['correctAnswer']),
+            ...(completedCandidate.explanation && completedCandidate.explanation.length >= 10 ? [] : ['explanation']),
+          ];
+          completed = {
+            ...completed,
+            candidate: completedCandidate,
+            usedAi: true,
+            generatedAlternatives: completed.generatedAlternatives || alternativesChanged,
+            generatedCorrectAnswer: completed.generatedCorrectAnswer || answerChanged,
+            generatedExplanation: completed.generatedExplanation || explanationChanged,
+            generations: [...(completed.generations ?? []), ...(correction.generation ? [correction.generation] : [])],
+            missingFields,
+            completenessStatus: missingFields.length > 0 ? resolveCompletenessStatus(missingFields) : 'COMPLETE_WITH_AI',
+          };
+          completenessStatus = completed.completenessStatus;
+          sourceContext = buildQuestionSourceEvidence(completedCandidate.text, sourceChunks, orderedChunks);
+          qualityDecisionActions.push('CORRECT_APPLIED');
+          quality = assessQuestionQuality({
+            text: completedCandidate.text,
+            alternatives: completedCandidate.alternatives,
+            correctAnswer: completedCandidate.correctAnswer,
+            explanation: completedCandidate.explanation,
+            sourceContext,
+            visualEvidenceAvailable,
+            generatedAlternatives: completed.generatedAlternatives,
+            generatedCorrectAnswer: completed.generatedCorrectAnswer,
+            generatedExplanation: completed.generatedExplanation,
+          });
+          aiReview = await this.qualityReviewAgent.review({
+            statement: completedCandidate.text,
+            alternatives: completedCandidate.alternatives,
+            correctAnswer: completedCandidate.correctAnswer,
+            explanation: completedCandidate.explanation,
+            sourceContext,
+          });
+        } else {
+          completed.completionFailedAgents = [...(completed.completionFailedAgents ?? []), 'CORRECTION'];
+          completed.completionFailures = [...(completed.completionFailures ?? []), correction.failure];
+          qualityDecisionActions.push('CORRECT_UNRESOLVED');
+        }
+      }
+
+      if ((!quality.structuralValid || blockedByMissingFigure) && !fixedTopicId) {
+        questionTopicId = null;
+        relatedTopics = [];
+        topicClassificationPending = true;
+      }
+      if (aiReview?.reasons.includes('AI_REVIEW_FAILED')) {
+        quality.reasons.push('AI_REVIEW_FAILED');
+      }
+      if (aiReview?.recommendedAction === 'REPROCESS') quality.recommendedAction = 'REPROCESS';
+      else if (aiReview?.recommendedAction === 'CORRECT' && quality.recommendedAction !== 'REPROCESS') quality.recommendedAction = 'CORRECT';
+      if (aiReview) {
+        quality.score = Math.min(quality.score, aiReview.score);
+        quality.severity = aiReview.severity === 'CRITICAL' || quality.severity === 'CRITICAL'
+          ? 'CRITICAL'
+          : aiReview.severity === 'WARNING' || quality.severity === 'WARNING' ? 'WARNING' : 'INFO';
+      }
+
+      // Auditoria final: normaliza a candidata inteira por campo antes da
+      // classificacao de topico e da persistencia. A ausencia de evidencia
+      // preserva o valor atual e fica registrada como UNVERIFIED.
+      let normalizationAudit: Awaited<ReturnType<QuestionQualityNormalizationAgentService['normalize']>> | null = null;
+      if (!completionBlocked) {
+        normalizationAudit = await this.qualityNormalizationAgent.normalize({
+          questionNumber: completedCandidate.questionNumber ?? null,
+          statement: completedCandidate.text,
+          alternatives: completedCandidate.alternatives,
+          correctAnswer: completedCandidate.correctAnswer,
+          explanation: completedCandidate.explanation,
+          sourceContext,
+          generatedFields: [
+            ...(completed.generatedAlternatives ? ['alternatives'] : []),
+            ...(completed.generatedCorrectAnswer ? ['correctAnswer'] : []),
+            ...(completed.generatedExplanation ? ['explanation'] : []),
+          ],
+        });
+
+        if (normalizationAudit.failure) {
+          completed.completionFailures = [...(completed.completionFailures ?? []), normalizationAudit.failure];
+          completed.completionFailedAgents = [...(completed.completionFailedAgents ?? []), 'NORMALIZATION'];
+          qualityDecisionActions.push('NORMALIZATION_FAILED');
+        } else if (normalizationAudit.changes.changedFields.length > 0 && normalizationAudit.confidence >= 0.65) {
+          const previousCandidate = completedCandidate;
+          const normalizationResult = applyNormalizationPatch(completedCandidate, normalizationAudit.changes);
+          const normalizedCandidate = normalizationResult.candidate;
+          if (normalizationResult.safetyAdjustments.length > 0) {
+            normalizationAudit = {
+              ...normalizationAudit,
+              evidence: [...normalizationAudit.evidence, ...normalizationResult.safetyAdjustments],
+            };
+          }
+          const alternativesChanged = JSON.stringify(normalizedCandidate.alternatives) !== JSON.stringify(previousCandidate.alternatives);
+          const answerChanged = normalizedCandidate.correctAnswer !== previousCandidate.correctAnswer;
+          const explanationChanged = normalizedCandidate.explanation !== previousCandidate.explanation;
+          completedCandidate = normalizedCandidate;
+          completed = {
+            ...completed,
+            candidate: completedCandidate,
+            usedAi: true,
+            generatedAlternatives: completed.generatedAlternatives || alternativesChanged,
+            generatedCorrectAnswer: completed.generatedCorrectAnswer || answerChanged,
+            generatedExplanation: completed.generatedExplanation || explanationChanged,
+            generations: [...(completed.generations ?? []), ...(normalizationAudit.generation ? [normalizationAudit.generation] : [])],
+          };
+          const missingFields = [
+            ...(completedCandidate.alternatives.length === 5 ? [] : ['alternatives']),
+            ...(completedCandidate.correctAnswer && /^[A-E]$/.test(completedCandidate.correctAnswer) ? [] : ['correctAnswer']),
+            ...(completedCandidate.explanation && completedCandidate.explanation.length >= 10 ? [] : ['explanation']),
+          ];
+          completed.missingFields = missingFields;
+          completed.completenessStatus = missingFields.length > 0 ? resolveCompletenessStatus(missingFields) : 'COMPLETE_WITH_AI';
+          completenessStatus = completed.completenessStatus;
+          sourceContext = buildQuestionSourceEvidence(completedCandidate.text, sourceChunks, orderedChunks);
+          qualityDecisionActions.push('NORMALIZATION_APPLIED');
+          quality = assessQuestionQuality({
+            text: completedCandidate.text,
+            alternatives: completedCandidate.alternatives,
+            correctAnswer: completedCandidate.correctAnswer,
+            explanation: completedCandidate.explanation,
+            sourceContext,
+            visualEvidenceAvailable,
+            generatedAlternatives: completed.generatedAlternatives,
+            generatedCorrectAnswer: completed.generatedCorrectAnswer,
+            generatedExplanation: completed.generatedExplanation,
+          });
+        } else {
+          qualityDecisionActions.push('NORMALIZATION_UNCHANGED');
+        }
+      }
+
+      sourceStructure = validateQuestionStructure({ text: completedCandidate.text, alternatives: completedCandidate.alternatives });
+      structurallyInvalid = blockedByMissingFigure
+        || boundaryBlocked
+        || sourceStructure.processingState !== 'STRUCTURALLY_VALID';
+
+      // A categorizacao deve usar somente a versao final estabilizada da questao.
+      // Classificar antes da reconstrução/correção vinculava o UUID do topico a
+      // alternativas contaminadas ou a um enunciado truncado.
+      let categoryResult: Awaited<ReturnType<QuestionCategoryAgentService['classify']>> = {
+        classification: null,
+        failure: !fixedTopicId && structurallyInvalid
+          ? {
+            agent: 'CATEGORY',
+            code: 'STRUCTURAL_VALIDATION_FAILED',
+            model: aiModels.questionCategorize,
+            attempts: 0,
+          }
+          : undefined,
+      };
+      if (fixedTopicId && topicMap.has(fixedTopicId)) {
         questionTopicId = fixedTopicId;
         relatedTopics = [];
         topicClassificationPending = false;
+      } else if (!structurallyInvalid && quality.structuralValid) {
+        categoryResult = await this.categoryAgent.classify({
+          statement: completedCandidate.text,
+          alternatives: completedCandidate.alternatives,
+          allowedTopics: categories,
+        });
+        if (categoryResult.classification) {
+          questionTopicId = categoryResult.classification.primaryTopicId;
+          relatedTopics = categoryResult.classification.relatedTopics;
+          topicClassificationPending = false;
+        }
       }
-      if (categoryClassification) {
-        questionTopicId = categoryClassification.primaryTopicId;
-        relatedTopics = categoryClassification.relatedTopics;
-        topicClassificationPending = false;
-      }
+      const finalCategoryClassification = categoryResult.classification;
       if (topicClassificationPending) {
         console.log('Classificacao especializada de topico falhou; questao seguira sem topico para revisao', {
           event: 'monitor.question_category_agent_failed_non_blocking',
@@ -552,6 +933,46 @@ export class QuestionExtractionService {
           sourceChunkIndexes: candidate.sourceChunkIndexes,
           categoryFailure: categoryResult.failure ?? null,
         });
+      }
+      normalizedText = normalizeQuestionText(completedCandidate.text);
+      textHash = createHash('sha256').update(normalizedText).digest('hex');
+      sourceKey = buildQuestionSourceKey({
+        documentId: sourceChunks[0]!.documentId,
+        sourceBlockId,
+        questionNumber: completedCandidate.questionNumber ?? null,
+        statement: normalizedText,
+      });
+
+      let duplicateQuestionId: string | null = null;
+      const duplicateByText = await findQuestionByTextHash(questionTopicId, textHash);
+      if (duplicateByText && (!existingQuestion || duplicateByText.id !== existingQuestion.id)) {
+        duplicatesSkipped += 1;
+        quality.reasons.push('DUPLICATE');
+        duplicateQuestionId = duplicateByText.id;
+        console.log('Questao duplicada ignorada na persistencia', {
+          event: 'monitor.question_duplicate_text_detected',
+          sourceBlockId,
+          duplicateQuestionId: duplicateByText.id,
+        });
+      }
+      if (embedding) {
+        const duplicateByEmbedding = await findSimilarQuestionByEmbedding(questionTopicId, embedding, 0.97);
+        if (duplicateByEmbedding && (!existingQuestion || duplicateByEmbedding.id !== existingQuestion.id)) {
+          duplicatesSkipped += 1;
+          duplicateQuestionId ??= duplicateByEmbedding.id;
+          quality.reasons.push('DUPLICATE');
+          console.log('Questao duplicada semanticamente ignorada na persistencia', {
+            event: 'monitor.question_duplicate_embedding_detected',
+            sourceBlockId,
+            duplicateQuestionId: duplicateByEmbedding.id,
+            similarity: duplicateByEmbedding.similarity,
+          });
+        }
+      }
+      if (duplicateQuestionId) {
+        quality.score = Math.min(quality.score, 20);
+        quality.severity = 'CRITICAL';
+        quality.recommendedAction = 'DUPLICATE';
       }
       const alternativesOrigin = completedCandidate.alternatives.length > 0
         ? (completed.generatedAlternatives ? 'AI_GENERATED' as const : 'SOURCE_DOCUMENT' as const)
@@ -627,8 +1048,8 @@ export class QuestionExtractionService {
         subjectId: resolvedQuestionContext.subjectId,
         topicId: questionTopicId,
         relatedTopics: questionTopicId ? relatedTopics : [],
-        text: candidate.text,
-        kind: completedCandidate.kind,
+        text: completedCandidate.text,
+        kind: 'MULTIPLE_CHOICE',
         alternatives: completedCandidate.alternatives,
         correctAnswer: completedCandidate.correctAnswer,
         correctAnswerOrigin: completedCandidate.correctAnswer ? answerOrigin : undefined,
@@ -637,10 +1058,11 @@ export class QuestionExtractionService {
         explanationOrigin: completedCandidate.explanation ? explanationOrigin : undefined,
         explanationConfidence: completed.generatedExplanation ? completed.confidence : 0.9,
         alternativesOrigin,
+        alternativesConfidence: completed.generatedAlternatives ? completed.confidence : 0.95,
         statementConfidence: sourceBlockId ? 0.95 : 0.7,
         statementOrigin: sourceBlockId ? 'SOURCE_DOCUMENT' : 'RECONSTRUCTED_FROM_DOCUMENT',
         completenessStatus,
-        qualityScore: calculateQualityScore(completedCandidate, completenessStatus),
+        qualityScore: quality.score,
         needsReview: true,
         metadata: {
           extractionMethod: candidate.sourceBlockId ? 'DETERMINISTIC' : 'LLM',
@@ -659,17 +1081,52 @@ export class QuestionExtractionService {
             ? categoryResult.failure ?? { code: 'NO_PRIMARY_TOPIC' }
             : null,
           topicClassificationAgentFailure: categoryResult.failure ?? null,
-          topicClassificationMethod: fixedTopicId
+          topicClassificationMethod: questionTopicId && fixedTopicId === questionTopicId
             ? 'UPLOAD_TOPIC'
-            : categoryClassification ? 'QUESTION_CATEGORY_AGENT' : 'SOURCE_OR_BLOCK',
+            : finalCategoryClassification ? 'QUESTION_CATEGORY_AGENT' : 'SOURCE_OR_BLOCK',
           missingFields: completed.missingFields,
+          qualityReasons: quality.reasons,
+          qualitySeverity: quality.severity,
+          recommendedAction: quality.recommendedAction,
+          processingState: structurallyInvalid
+            ? 'STRUCTURALLY_INVALID'
+            : completed.usedAi ? 'AI_COMPLETED' : 'PENDING_REVIEW',
+          sourceStructuralReasons: sourceStructure.reasons,
+          statementEvidence: {
+            sourceMatch: statementEvidence.sourceMatch,
+            valid: statementEvidence.valid,
+            reasons: statementEvidence.reasons,
+          },
+          boundaryValidation: {
+            decision: boundaryValidation.decision,
+            confidence: boundaryValidation.confidence,
+            reason: boundaryValidation.reason,
+            relevantChunkIndexes: boundaryValidation.relevantChunkIndexes,
+            failure: boundaryValidation.failure ?? null,
+          },
+          visualEvidenceAvailable,
+          visualEvidenceChunkIndexes: sourceChunks
+            .filter((chunk) => chunk.pageHasImages === true)
+            .map((chunk) => chunk.chunkIndex),
+          semanticAiReview: aiReview,
+          normalizationAudit,
+          qualityDecisionActions,
+          structuralValid: quality.structuralValid,
+          semanticValid: quality.semanticValid,
+          mathConsistencyChecked: quality.mathConsistencyChecked,
+          mathConsistencyValid: quality.mathConsistencyValid,
+          alternativesGenerated: completed.generatedAlternatives,
+          answerGenerated: completed.generatedCorrectAnswer,
+          explanationGenerated: completed.generatedExplanation,
+          needsReextraction: quality.recommendedAction === 'REPROCESS',
+          duplicateQuestionId,
         },
         textHash,
         sourceKey,
         sourceChunkIds: sourceChunks.map((chunk) => chunk.id),
         sources,
-        aiGenerations: [...(completed.generations ?? []), ...(categoryClassification ? [categoryClassification.generation] : [])].length > 0
-          ? [...(completed.generations ?? []), ...(categoryClassification ? [categoryClassification.generation] : [])].map((generation) => ({
+        aiGenerations: [...(completed.generations ?? []), ...(finalCategoryClassification ? [finalCategoryClassification.generation] : [])].length > 0
+          ? [...(completed.generations ?? []), ...(finalCategoryClassification ? [finalCategoryClassification.generation] : [])].map((generation) => ({
             generationType: generation.generationType,
             model: generation.model,
             promptVersion: QUESTION_ENRICHMENT_PROMPT_VERSION,
@@ -687,6 +1144,7 @@ export class QuestionExtractionService {
         chunkIds: sourceChunks.map((chunk) => chunk.id),
         chunkIndexes: sourceChunks.map((chunk) => chunk.chunkIndex),
       } });
+      if (completed.missingFields.length > 0) questionsWithMissingFields += 1;
       console.log('Questao salva para revisao', {
         event: 'monitor.question_saved',
         questionId: question.id,
@@ -713,6 +1171,10 @@ export class QuestionExtractionService {
         questionsSaved: savedQuestions.length,
         duplicatesSkipped,
         invalidTopicsSkipped,
+        candidatesPromoted,
+        candidatesRetained,
+        questionsWithMissingFields,
+        topicFallbacks,
       },
     };
   }
@@ -751,7 +1213,7 @@ export class QuestionExtractionService {
             {
               role: 'system',
               content:
-                'Extraia somente questoes, exercicios ou problemas explicitamente presentes no texto. Nao invente perguntas, alternativas, gabarito ou explicacao. Se o trecho estiver incompleto, nao extraia a questao. Use kind OPEN_ENDED para questao discursiva, MULTIPLE_CHOICE para alternativas e TRUE_FALSE para verdadeiro/falso. Nao classifique topicos nesta etapa; a categorizacao sera feita por outro agente com uma lista fechada. sourceChunkIndexes deve conter os indices dos chunks que sustentam a questao.',
+                'Extraia somente questoes, exercicios ou problemas explicitamente presentes no texto. Preserve o enunciado documental. A saida final do produto e sempre MULTIPLE_CHOICE: quando uma questao aproveitavel nao tiver alternativas, retorne alternatives vazio para que outro agente as gere; nao invente o enunciado. Nao invente gabarito ou explicacao. Se o enunciado estiver incompleto ou misturado com outra questao, nao extraia. Nao classifique topicos nesta etapa; a categorizacao sera feita por outro agente com uma lista fechada. sourceChunkIndexes deve conter os indices dos chunks que sustentam a questao.',
             },
             {
               role: 'user',
@@ -797,11 +1259,45 @@ export class QuestionExtractionService {
   private async completeQuestionCandidate(
     candidate: z.infer<typeof extractedQuestionSchema>,
     sourceChunks: ExtractionChunk[],
+    questionSpanId: string,
   ): Promise<CandidateCompletion> {
     const sourceContext = sourceChunks
       .map((chunk) => chunk.content)
       .join('\n\n---\n\n')
       .slice(0, 18_000);
+    const contextPack = await buildQuestionContextPack({
+      documentId: sourceChunks[0]!.documentId,
+      questionSpanId,
+      questionSource: {
+        statement: candidate.text,
+        alternatives: candidate.alternatives,
+        sourceElementIds: [],
+        sourceChunkIds: sourceChunks.map((chunk) => chunk.id),
+      },
+      answerKeySource: candidate.correctAnswer
+        ? {
+          answer: candidate.correctAnswer,
+          confidence: 1,
+          sourceElementIds: [],
+          sourceChunkIds: sourceChunks.map((chunk) => chunk.id),
+        }
+        : undefined,
+      solutionSource: candidate.explanation
+        ? {
+          content: candidate.explanation,
+          confidence: 1,
+          sourceElementIds: [],
+          sourceChunkIds: sourceChunks.map((chunk) => chunk.id),
+        }
+        : undefined,
+      conceptSupport: [],
+      visuals: [],
+      quality: {
+        structuralStatus: 'VALID',
+        mathLayoutStatus: 'NOT_APPLICABLE',
+        warnings: [],
+      },
+    });
     const completed = await this.completionService.complete({
       documentId: sourceChunks[0]!.documentId,
       sourceBlockId: candidate.sourceBlockId ?? sourceChunks.find((chunk) => chunk.blockId)?.blockId ?? null,
@@ -811,6 +1307,7 @@ export class QuestionExtractionService {
       correctAnswer: candidate.correctAnswer,
       explanation: candidate.explanation,
       sourceContext,
+      contextPack,
     });
     return {
       candidate: {
@@ -1152,7 +1649,7 @@ type DeterministicBlock = {
 
 type ChunkWithBlock = ExtractionChunk & { blockId: string | null };
 
-function extractQuestionsFromBlocks(
+export function extractQuestionsFromBlocks(
   blocks: DeterministicBlock[],
   chunks: ChunkWithBlock[],
 ) {
@@ -1161,7 +1658,9 @@ function extractQuestionsFromBlocks(
   const candidates: Array<z.infer<typeof extractedQuestionSchema>> = [];
 
   for (const block of blocks.filter((candidate) => candidate.type === 'QUESTION')) {
-    const parsed = parseQuestionBlock(block.normalizedContent);
+    const segments = splitQuestionBlockContent(block.normalizedContent);
+    for (const [segmentIndex, segment] of segments.entries()) {
+      const parsed = parseQuestionBlock(segment);
     if (!parsed) {
       console.log('Bloco QUESTION ignorado pelo parser deterministico', {
         event: 'monitor.question_deterministic_block_invalid',
@@ -1183,7 +1682,9 @@ function extractQuestionsFromBlocks(
       });
     }
 
-    const number = block.questionNumber ?? parseQuestionNumber(block.normalizedContent);
+    const number = segmentIndex === 0
+      ? block.questionNumber ?? parseQuestionNumber(segment)
+      : parseQuestionNumber(segment);
     const answerEntry = number ? answerKey.get(number) ?? null : null;
     const answer = answerEntry?.answer ?? null;
     const solution = number ? solutions.get(number) : undefined;
@@ -1222,19 +1723,109 @@ function extractQuestionsFromBlocks(
       pageStart: block.pageStart,
       pageEnd: block.pageEnd,
     });
+    }
   }
 
   return candidates;
 }
 
+/**
+ * Divide blocos que contêm questões numeradas consecutivas. A divisão só é
+ * aceita quando cada segmento possui intenção de questão; números internos
+ * do enunciado continuam no mesmo segmento.
+ */
+export function splitQuestionBlockContent(content: string) {
+  // Somente início de linha é considerado uma fronteira confiável. Números
+  // precedidos por espaço podem ser medidas, percentuais ou quantidades do
+  // próprio enunciado (ex.: "16 pontos", "600 cm") e não novas questões.
+  const markers = [...content.matchAll(/(?:^|\n)\s*((?:quest[aã]o\s*)?\d{1,3}[.)]\s+(?:\([^\n)]{2,100}\)\s*)?[A-ZÁÀÃÂÉÊÍÓÔÕÚÇ])/giu)]
+    .map((match) => (match.index ?? 0) + (match[0].length - match[1]!.length));
+
+  // Em documentos extraídos como uma única linha, aceitamos apenas um novo
+  // item após pontuação de encerramento da questão anterior.
+  for (const match of content.matchAll(/[?!.]\s+((?:quest[aã]o\s*)?\d{1,3}[.)]\s+(?:\([^\n)]{2,100}\)\s*)?[A-ZÁÀÃÂÉÊÍÓÔÕÚÇ])/giu)) {
+    const start = (match.index ?? 0) + match[0].length - match[1]!.length;
+    if (!markers.includes(start)) markers.push(start);
+  }
+  markers.sort((a, b) => a - b);
+  if (markers.length <= 1) return [content.trim()];
+  const segments = markers.map((start, index) => content.slice(start, markers[index + 1]).trim()).filter(Boolean);
+  return segments.length > 1 ? segments : [content.trim()];
+}
+
+function applyQuestionPatch<T extends {
+  text: string;
+  alternatives: Array<{ label: string; text: string }>;
+  correctAnswer: string | null;
+  explanation: string | null;
+}>(candidate: T, patch: QuestionPatch): T {
+  const changedFields = new Set(patch.changedFields);
+
+  return {
+    ...candidate,
+    ...(changedFields.has('statement') && patch.statement ? { text: patch.statement } : {}),
+    ...(changedFields.has('alternatives') && patch.alternatives ? { alternatives: patch.alternatives } : {}),
+    ...(changedFields.has('correctAnswer') ? { correctAnswer: patch.correctAnswer } : {}),
+    ...(changedFields.has('explanation') ? { explanation: patch.explanation } : {}),
+  };
+}
+
+/**
+ * Aplica o patch final com uma barreira determinística para os campos mais
+ * perigosos. O modelo pode sugerir uma correção, mas não pode substituir um
+ * gabarito válido por uma letra que contradiga o próprio cálculo/exposição.
+ */
+function applyNormalizationPatch<T extends {
+  text: string;
+  alternatives: Array<{ label: string; text: string }>;
+  correctAnswer: string | null;
+  explanation: string | null;
+}>(candidate: T, patch: QuestionPatch): { candidate: T; safetyAdjustments: string[] } {
+  const proposed = applyQuestionPatch(candidate, patch);
+  const safetyAdjustments: string[] = [];
+  const currentAnswer = candidate.correctAnswer?.trim().toUpperCase() ?? null;
+  const proposedAnswer = proposed.correctAnswer?.trim().toUpperCase() ?? null;
+  const proposedLabels = new Set(proposed.alternatives.map((alternative) => alternative.label.trim().toUpperCase()));
+  const explicitExplanationAnswer = extractExplicitAnswerFromExplanation(proposed.explanation);
+
+  if (isValidAnswerLabel(currentAnswer) && candidate.alternatives.some((alternative) => alternative.label.toUpperCase() === currentAnswer)) {
+    const proposedAnswerIsUsable = isValidAnswerLabel(proposedAnswer) && proposedLabels.has(proposedAnswer);
+    const proposedAnswerAgreesWithExplanation = proposedAnswerIsUsable
+      && (!explicitExplanationAnswer || explicitExplanationAnswer === proposedAnswer);
+    if (!proposedAnswerIsUsable || (proposedAnswer !== currentAnswer && !proposedAnswerAgreesWithExplanation)) {
+      proposed.correctAnswer = currentAnswer;
+      safetyAdjustments.push('NORMALIZATION_GUARD_PRESERVED_VALID_ANSWER');
+    }
+  } else if (!isValidAnswerLabel(proposedAnswer) || !proposedLabels.has(proposedAnswer)) {
+    proposed.correctAnswer = candidate.correctAnswer;
+    safetyAdjustments.push('NORMALIZATION_GUARD_REJECTED_INVALID_ANSWER');
+  }
+
+  // Remove frases de processo que não pertencem à solução pedagógica.
+  if (proposed.explanation) {
+    const sanitized = proposed.explanation
+      .replace(/\s*(?:Como a questão|Como a pergunta)[^.?!]*(?:foi adicionad[ao]|para cumprir|regra de cinco)[^.?!]*[.?!]/giu, ' ')
+      .replace(/\s+/gu, ' ')
+      .trim();
+    if (sanitized !== proposed.explanation) {
+      proposed.explanation = sanitized;
+      safetyAdjustments.push('NORMALIZATION_GUARD_REMOVED_PROCESS_META');
+    }
+  }
+
+  return { candidate: proposed, safetyAdjustments };
+}
+
 function parseQuestionBlock(content: string) {
-  const lines = content.split('\n').map((line) => line.trim()).filter(Boolean);
+  const questionContent = removeQuestionAncillaryContent(content);
+  const lines = questionContent.split('\n').map((line) => line.trim()).filter(Boolean);
   if (lines.length === 0) return null;
   if (isInvalidQuestionFragment(lines.join('\n'))) return null;
   const firstLine = lines[0]!
     .replace(/^(?:quest[aã]o\s*)?\d{1,3}[.)]\s*/i, '')
     .replace(/^ex(?:erc[ií]cio)?\.?\s*\d+\s*[:.)-]?\s*/i, '')
     .trim();
+  if (isGenericActivityHeading(firstLine)) return null;
   const body = [firstLine, ...lines.slice(1)].join('\n').trim();
   const labeledAlternatives = parseAlternatives(body);
   const unlabeledAlternatives = labeledAlternatives.length === 0
@@ -1248,15 +1839,27 @@ function parseQuestionBlock(content: string) {
     ?? (firstAlternativeIndex >= 0 ? body.slice(0, firstAlternativeIndex) : body).trim();
   if (!hasQuestionIntent(statement, alternatives)) return null;
 
-  const kind = alternatives.length >= 2
-    ? (alternatives.every((alternative) => /^[VF]$/i.test(alternative.text.trim())) ? 'TRUE_FALSE' : 'MULTIPLE_CHOICE')
-    : 'OPEN_ENDED';
+  // O produto normaliza todos os itens para múltipla escolha. Quando a fonte
+  // não traz alternativas, a etapa de completude deverá gerá-las.
+  const kind = 'MULTIPLE_CHOICE' as const;
 
   return {
     text: statement,
     kind,
     alternatives,
   } as const;
+}
+
+function removeQuestionAncillaryContent(content: string) {
+  // Soluções, comentários pedagógicos e curiosidades pertencem ao material de
+  // apoio, não ao enunciado. Mantê-los faz o parser capturar a questão seguinte
+  // ou transformar explicações em alternativas.
+  const match = /(?:^|\n)\s*(?:solu[cç][aã]o|resolu[cç][aã]o|coment[aá]rio|curiosidade|refer[eê]ncias? bibliogr[aá]ficas)\b/imu.exec(content);
+  return (match?.index === undefined ? content : content.slice(0, match.index)).trim();
+}
+
+function isGenericActivityHeading(value: string) {
+  return /^(?:fa[çc]a|resolva)\s+o\s+que\s+se\s+pede\s*[:.]?$/iu.test(value);
 }
 
 function isInvalidQuestionFragment(content: string) {
@@ -1321,15 +1924,21 @@ function circledAlternativeToLetter(value: string) {
 function buildAnswerKeyMap(blocks: DeterministicBlock[]) {
   const map = new Map<string, { answer: string; blockId: string }>();
   for (const block of blocks) {
-    if (!/^ANSWER_KEY$/i.test((block as { type?: string }).type ?? '') && !/\b(gabarito|respostas?)\b/i.test(block.normalizedContent)) continue;
+    // Somente blocos estruturalmente classificados como gabarito podem
+    // alimentar correctAnswer. Procurar "resposta" em qualquer texto fazia
+    // fragmentos de solucao vazarem para outra questao.
+    if (!/^ANSWER_KEY$/i.test((block as { type?: string }).type ?? '')) continue;
     const matches = Array.from(block.normalizedContent.matchAll(/(?:^|\s)(\d{1,3})\s*[.)\-:]\s*/gm));
     for (const [index, match] of matches.entries()) {
       const answerStart = (match.index ?? 0) + match[0].length;
       const answerEnd = matches[index + 1]?.index ?? block.normalizedContent.length;
-      const answer = block.normalizedContent.slice(answerStart, answerEnd)
+      const rawAnswer = block.normalizedContent.slice(answerStart, answerEnd)
         .replace(/\s+/g, ' ')
         .trim();
-      if (!answer || /^(?:resolu[cç][aã]o|solu[cç][aã]o|coment[aá]rio)\b/i.test(answer)) continue;
+      // A pipeline atual persiste multipla escolha. Aceitar somente uma letra
+      // ou ordinal isolado impede que formulas/explicacoes virem gabarito.
+      const answer = rawAnswer.match(/^\[?\(?([A-Ea-e]|[1-5])\)?\]?\s*[.;,]?$/u)?.[1] ?? null;
+      if (!answer) continue;
       map.set(match[1]!, { answer, blockId: block.id });
     }
   }
@@ -1373,6 +1982,75 @@ function hasQuestionIntent(statement: string, alternatives: Array<{ label: strin
 function isPlausibleQuestionCandidate(candidate: z.infer<typeof extractedQuestionSchema>) {
   if (isInvalidQuestionFragment(candidate.text)) return false;
   return hasQuestionIntent(candidate.text, candidate.alternatives);
+}
+
+export function evaluateQuestionCandidatePromotion(input: {
+  candidate: z.infer<typeof extractedQuestionSchema>;
+  sourceChunks: ExtractionChunk[];
+}): CandidatePromotionDecision {
+  const plausibleCandidate = isPlausibleQuestionCandidate(input.candidate);
+  const statementEvidence = validateQuestionStatementEvidence(input.candidate.text, input.sourceChunks);
+  const sourceStructure = validateQuestionStructure({
+    text: input.candidate.text,
+    alternatives: input.candidate.alternatives,
+  });
+  // "hasImages" apenas indica que a pagina contem algum objeto grafico;
+  // enquanto nao houver recorte associado ao span, uma figura explicita
+  // permanece pendente e nunca e enviada a agentes textuais.
+  const visualPending = requiresMissingFigure(input.candidate.text, false)
+    || statementEvidence.reasons.includes('MISSING_VISUAL_EVIDENCE');
+  const recoverableContextReasons = new Set([
+    'STATEMENT_OMITS_LEADING_CONTEXT',
+    'STARTS_AS_CONTINUATION',
+    'ENDS_AS_CONTINUATION',
+  ]);
+  const hardStatementEvidenceReasons = new Set([
+    'EMPTY_STATEMENT',
+    'SOURCE_ANCHOR_NOT_FOUND',
+    'CONTAINS_NEXT_QUESTION',
+    'MULTI_ITEM_ACTIVITY',
+    'MISSING_VISUAL_EVIDENCE',
+  ]);
+  const hasRecoverableContextGap = statementEvidence.reasons.some((reason) => recoverableContextReasons.has(reason));
+  const hasHardStatementEvidenceFailure = statementEvidence.reasons.some((reason) => hardStatementEvidenceReasons.has(reason));
+  const hasSourceChunks = input.sourceChunks.length > 0;
+  const sourceText = input.sourceChunks.map((chunk) => chunk.content).join('\n');
+  const hasRecoverableQuestionContext = hasSourceChunks
+    && statementEvidence.sourceMatch !== 'NONE'
+    && hasQuestionIntent(sourceText, []);
+  const effectivePlausibleCandidate = plausibleCandidate || hasRecoverableQuestionContext;
+  const recoverableInvalidStatementEvidence = !statementEvidence.valid
+    && hasRecoverableContextGap
+    && !hasHardStatementEvidenceFailure
+    && hasSourceChunks;
+  const recoverableStructuralGap = sourceStructure.reasons.length > 0
+    && sourceStructure.reasons.every((reason) => reason === 'INCOMPLETE_STATEMENT' || reason === 'MISSING_ALTERNATIVES' || reason === 'INVALID_ALTERNATIVES' || reason === 'NON_QUESTION_BLOCK')
+    && (hasRecoverableContextGap || hasRecoverableQuestionContext);
+  const hardStructuralBlock = sourceStructure.processingState === 'STRUCTURALLY_INVALID'
+    && !recoverableStructuralGap;
+  const completionBlocked = !effectivePlausibleCandidate
+    || (!statementEvidence.valid && !recoverableInvalidStatementEvidence)
+    || visualPending
+    || hardStructuralBlock;
+  const promotionReasons = [
+    ...(!effectivePlausibleCandidate ? ['INVALID_FRAGMENT'] : []),
+    ...statementEvidence.reasons,
+    ...sourceStructure.reasons,
+    ...(visualPending ? ['VISUAL_EVIDENCE_PENDING'] : []),
+  ];
+  const candidateStatus = completionBlocked
+    ? visualPending ? 'VISUAL_PENDING' as const : statementEvidence.valid ? 'REVIEW_REQUIRED' as const : 'BLOCKED' as const
+    : 'READY_FOR_COMPLETION' as const;
+
+  return {
+    plausibleCandidate,
+    statementEvidence,
+    sourceStructure,
+    visualPending,
+    completionBlocked,
+    candidateStatus,
+    promotionReasons,
+  };
 }
 
 function normalizeAlternatives(alternatives: Array<{ label: string; text: string }>) {

@@ -20,4 +20,13 @@ export const monitorIdParamsSchema = z.object({
   monitorId: z.string().uuid(),
 });
 
+export const updateMonitorSchema = z.object({
+  name: z.string().trim().min(3).max(120).optional(),
+  description: z.string().trim().max(500).optional().nullable(),
+  avatarUrl: z.string().trim().optional().nullable(),
+  detailedDescription: z.string().trim().max(2000).optional().nullable(),
+  status: z.enum(['DRAFT', 'READY_TO_PUBLISH', 'PUBLISHED', 'PAUSED', 'ARCHIVED']).optional(),
+});
+
 export type CreateMonitorInput = z.infer<typeof createMonitorSchema>;
+export type UpdateMonitorInput = z.infer<typeof updateMonitorSchema>;

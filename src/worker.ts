@@ -5,9 +5,32 @@ import { prisma } from './lib/prisma.js';
 import { DOCUMENT_QUEUE_NAME, type DocumentJob } from './queues/document.queue.js';
 import { markDocumentFailed } from './repositories/document-worker.repository.js';
 import { DocumentWorkerService } from './worker/services/document-worker.service.js';
+import { startDailyChallengeScheduler } from './modules/daily_challgens/services/daily-challenge-scheduler.service.js';
+
+const [questionGenerationEnumState] = await prisma.$queryRaw<Array<{ hasCorrection: boolean; hasNormalization: boolean }>>`
+  SELECT EXISTS (
+    SELECT 1
+    FROM pg_enum enum_value
+    JOIN pg_type enum_type ON enum_type.oid = enum_value.enumtypid
+    WHERE enum_type.typname = 'QuestionAiGenerationType'
+      AND enum_value.enumlabel = 'CORRECTION'
+  ) AS "hasCorrection",
+  EXISTS (
+    SELECT 1
+    FROM pg_enum enum_value
+    JOIN pg_type enum_type ON enum_type.oid = enum_value.enumtypid
+    WHERE enum_type.typname = 'QuestionAiGenerationType'
+      AND enum_value.enumlabel = 'NORMALIZATION'
+  ) AS "hasNormalization"
+`;
+
+if (!questionGenerationEnumState?.hasCorrection || !questionGenerationEnumState.hasNormalization) {
+  throw new Error('Migration obrigatoria ausente: QuestionAiGenerationType.CORRECTION/NORMALIZATION. Execute npx prisma migrate deploy antes de iniciar o worker.');
+}
 
 const redisConnection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
 const workerService = new DocumentWorkerService();
+const dailyChallengeScheduler = startDailyChallengeScheduler();
 
 const worker = new Worker<DocumentJob>(
   DOCUMENT_QUEUE_NAME,
@@ -54,6 +77,7 @@ worker.on('error', (error) => {
 
 const shutdown = async (signal: string) => {
   console.log('Encerramento do worker solicitado', { event: 'monitor.document_worker_shutdown', signal });
+  dailyChallengeScheduler.stop();
   await worker.close();
   await redisConnection.quit();
   await prisma.$disconnect();

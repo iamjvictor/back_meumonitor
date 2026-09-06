@@ -3,9 +3,17 @@ import type { CreateMonitorInput } from '../models/monitor.model.js';
 
 export class MonitorRepository {
   private readonly monitorTree = {
+    teacher: true,
     subjects: {
       orderBy: { position: 'asc' as const },
       include: { topics: { orderBy: { position: 'asc' as const } } },
+    },
+    _count: {
+      select: {
+        questions: { where: { status: 'APPROVED' as const } },
+        flashcards: { where: { status: 'APPROVED' as const } },
+        documents: true,
+      },
     },
   };
 
@@ -49,11 +57,33 @@ export class MonitorRepository {
   }
 
   async findAllOwnedByUserId(userId: string) {
-    return prisma.monitor.findMany({
-      where: { teacher: { userId } },
+    console.log('[MonitorRepository.findAllOwnedByUserId] Iniciando busca de monitores para userId:', userId);
+    const teacher = await prisma.teacher.findUnique({ where: { userId } });
+    console.log('[MonitorRepository.findAllOwnedByUserId] Registro de professor encontrado:', {
+      userId,
+      teacherFound: Boolean(teacher),
+      teacherId: teacher?.id,
+      teacherEmail: teacher?.email,
+    });
+
+    const monitors = await prisma.monitor.findMany({
+      where: {
+        OR: [
+          { teacher: { userId } },
+          ...(teacher ? [{ teacherId: teacher.id }] : []),
+        ],
+      },
       include: this.monitorTree,
       orderBy: { updatedAt: 'desc' },
     });
+
+    console.log('[MonitorRepository.findAllOwnedByUserId] Monitores retornados do DB:', {
+      userId,
+      count: monitors.length,
+      monitors: monitors.map((m) => ({ id: m.id, name: m.name, status: m.status })),
+    });
+
+    return monitors;
   }
 
   async findOwnedByUserId(userId: string, monitorId: string) {
@@ -139,6 +169,36 @@ export class MonitorRepository {
 
     await prisma.monitorTopic.deleteMany({
       where: { id: topicId, subjectId },
+    });
+
+    return this.findOwnedByUserId(userId, monitorId);
+  }
+
+  async update(
+    userId: string,
+    monitorId: string,
+    data: {
+      name?: string;
+      description?: string | null;
+      avatarUrl?: string | null;
+      detailedDescription?: string | null;
+      status?: 'DRAFT' | 'READY_TO_PUBLISH' | 'PUBLISHED' | 'PAUSED' | 'ARCHIVED';
+    }
+  ) {
+    const monitor = await prisma.monitor.findFirst({
+      where: { id: monitorId, teacher: { userId } },
+    });
+    if (!monitor) return null;
+
+    await prisma.monitor.update({
+      where: { id: monitorId },
+      data: {
+        ...(data.name !== undefined ? { name: data.name } : {}),
+        description: data.description !== undefined ? data.description : undefined,
+        avatarUrl: data.avatarUrl !== undefined ? data.avatarUrl : undefined,
+        detailedDescription: data.detailedDescription !== undefined ? data.detailedDescription : undefined,
+        ...(data.status !== undefined ? { status: data.status, publishedAt: data.status === 'PUBLISHED' ? new Date() : undefined } : {}),
+      },
     });
 
     return this.findOwnedByUserId(userId, monitorId);

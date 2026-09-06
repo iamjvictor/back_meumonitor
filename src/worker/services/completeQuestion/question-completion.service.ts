@@ -14,18 +14,33 @@ export class QuestionCompletionService {
     const alternatives = await this.alternativesAgent.complete(input);
     const resolvedAlternatives = alternatives.alternatives;
 
-    const answer = await this.answerAgent.complete(
-      { ...input, alternatives: resolvedAlternatives },
-      resolvedAlternatives,
-    );
+    const answer = resolvedAlternatives.length > 0
+      ? await this.answerAgent.complete(
+        { ...input, alternatives: resolvedAlternatives },
+        resolvedAlternatives,
+      )
+      : {
+        correctAnswer: null,
+        generated: false,
+        usedDocumentRag: false,
+        decisionSource: null,
+        generation: undefined,
+        failure: undefined,
+      } as const;
 
-    const explanation = await this.explanationAgent.complete({
-      ...input,
-      alternatives: resolvedAlternatives,
-      correctAnswer: answer.correctAnswer ?? input.correctAnswer,
-    });
-    const correctAnswer = answer.correctAnswer ?? input.correctAnswer;
-    const resolvedExplanation = explanation.explanation ?? input.explanation?.trim() ?? null;
+    const sourceExplanation = input.explanation?.trim();
+    const explanation = sourceExplanation && sourceExplanation.length >= 10
+      ? { explanation: sourceExplanation, generated: false }
+      : await this.explanationAgent.complete({
+        ...input,
+        alternatives: resolvedAlternatives,
+        correctAnswer: answer.correctAnswer,
+      });
+    // O agente de resposta valida o gabarito documental contra as alternativas.
+    // Nunca persista o valor bruto da fonte quando ele não puder ser convertido
+    // em A–E: ele pode ser rodapé, referência ou resposta de outra questão.
+    const correctAnswer = answer.correctAnswer;
+    const resolvedExplanation = explanation.explanation ?? sourceExplanation ?? null;
     const missingFields = [
       ...(resolvedAlternatives.length === 5 ? [] : ['alternatives']),
       ...(

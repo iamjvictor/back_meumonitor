@@ -33,13 +33,6 @@ export class DocumentController {
         if (part.type === 'file') {
           if (uploadedFile) return reply.code(400).send({ error: 'TOO_MANY_FILES', message: 'Envie apenas um arquivo por requisicao.' });
 
-          console.log('Arquivo recebido no multipart', {
-            event: 'monitor.document_file_received',
-            requestId: request.id,
-            filename: part.filename,
-            mimeType: part.mimetype,
-          });
-
           // O stream precisa ser consumido antes de continuar iterando o multipart.
           const buffer = await part.toBuffer();
           uploadedFile = {
@@ -48,20 +41,8 @@ export class DocumentController {
             buffer,
           };
 
-          console.log('Conteudo do arquivo recebido', {
-            event: 'monitor.document_file_buffered',
-            requestId: request.id,
-            filename: part.filename,
-            sizeBytes: buffer.length,
-          });
         } else {
           fields[part.fieldname] = String(part.value);
-          console.log('Campo recebido no multipart', {
-            event: 'monitor.document_field_received',
-            requestId: request.id,
-            field: part.fieldname,
-            value: part.fieldname === 'tag' || part.fieldname.endsWith('Id') ? String(part.value) : '[omitted]',
-          });
         }
       }
 
@@ -87,25 +68,6 @@ export class DocumentController {
           details: parsed.error.flatten().fieldErrors,
         });
       }
-
-      console.log('Arquivo convertido para buffer', {
-        event: 'monitor.document_buffer_ready',
-        requestId: request.id,
-        filename: uploadedFile.filename,
-        sizeBytes: uploadedFile.buffer.length,
-        tag: parsed.data.tag,
-        subjectId: parsed.data.subjectId,
-        topicId: parsed.data.topicId,
-      });
-
-      console.log('Iniciando salvamento do documento', {
-        event: 'monitor.document_save_started',
-        requestId: request.id,
-        userId: request.user.id,
-        monitorId: request.params.monitorId,
-        filename: uploadedFile.filename,
-        tag: parsed.data.tag,
-      });
 
       const result = await this.service.upload(request.user.id, request.params.monitorId, parsed.data, {
         buffer: uploadedFile.buffer,
@@ -133,14 +95,6 @@ export class DocumentController {
         documentId: result.document.id,
         tag: result.document.tag,
         status: result.document.status,
-        durationMs: Date.now() - startedAt,
-      });
-
-      console.log('Resposta do upload enviada', {
-        event: 'monitor.document_upload_response_sent',
-        requestId: request.id,
-        documentId: result.document.id,
-        statusCode: 201,
         durationMs: Date.now() - startedAt,
       });
 

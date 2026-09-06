@@ -1,15 +1,23 @@
 import { countTokens } from 'gpt-tokenizer';
+import { env } from '../../config/env.js';
 import {
   findDocumentBlocksForChunking,
   saveExtractedChunks,
   type DocumentChunkInput,
 } from '../../repositories/document-worker.repository.js';
 
-const CHUNK_TOKEN_LIMIT = 600;
-const CHUNK_OVERLAP_TOKENS = 100;
-const EMBEDDING_VERSION = 'hierarchical-block-tokenized-v2';
+const PARENT_CHUNK_TARGET_TOKENS = env.RAG_PARENT_CHUNK_TARGET_TOKENS;
+const PARENT_CHUNK_MAX_TOKENS = env.RAG_PARENT_CHUNK_MAX_TOKENS;
+const CHILD_CHUNK_TARGET_TOKENS = env.RAG_CHILD_CHUNK_TARGET_TOKENS;
+const CHILD_CHUNK_MAX_TOKENS = env.RAG_CHILD_CHUNK_MAX_TOKENS;
+const CHUNK_OVERLAP_TOKENS = env.RAG_CHILD_CHUNK_OVERLAP_TOKENS;
+export const DOCUMENT_EMBEDDING_VERSION = 'hierarchical-block-tokenized-v3';
 const TOKENIZER_VERSION = 'gpt-tokenizer-cl100k';
-const MIN_RETRIEVAL_CHUNK_CHARS = 24;
+const EMBEDDING_MIN_CHARS = env.EMBEDDING_MIN_CHARS;
+const EMBEDDING_MIN_TOKENS = env.EMBEDDING_MIN_TOKENS;
+export const countChunkTokens = countTokens;
+const PARENT_CHUNK_TYPES = new Set(['QUESTION', 'ANSWER_KEY', 'SOLUTION', 'WORKED_EXAMPLE']);
+const SHORT_VALID_TYPES = new Set(['QUESTION', 'ANSWER_KEY', 'SOLUTION', 'WORKED_EXAMPLE', 'FORMULA']);
 
 export type BlockForChunking = {
   id: string;
@@ -50,13 +58,20 @@ type ChunkSkipReason =
   | 'ANSWER_KEY_FRAGMENT'
   | 'INVALID_QUESTION'
   | 'FORMULA_FRAGMENT'
+  | 'PROMOTIONAL_FRAGMENT'
+  | 'STANDALONE_HEADING'
+  | 'TRUNCATED_FRAGMENT'
   | 'TOO_SHORT';
 
 export type ChunkEligibility =
   | { eligible: true }
   | { eligible: false; reason: ChunkSkipReason };
 
-const UNSUPPORTED_BLOCK_TYPES = new Set(['IMAGE_REFERENCE', 'UNKNOWN']);
+export function getInitialChunkStatus(): DocumentChunkInput['status'] {
+  return 'EMBEDDING_PENDING';
+}
+
+const UNSUPPORTED_BLOCK_TYPES = new Set(['IMAGE_REFERENCE', 'UNKNOWN', 'SECTION', 'SUBSECTION']);
 const QUESTION_INTENT = /\?|\b(?:calcule|determine|encontre|resolva|assinale|marque|indique|qual(?:\s+e|\s+é)?|quanto|sabe-se|considere|uma?\s+(?:empresa|pessoa|loja|turma|máquina|grupo)|sejam?)\b/i;
 const ANSWER_KEY_ENTRIES = /(?:^|\s)\d{1,3}\s*[.)-]\s*(?:\[?[A-H]\]?|r?\$?\s*[\d.,]+%?)(?=\s|$)/gim;
 
@@ -105,6 +120,38 @@ function isFormulaFragment(content: string) {
   return words < 3 && symbols >= 4;
 }
 
+function isPromotionalFragment(content: string) {
+  const compact = normalizeForInspection(content);
+  return /\b(?:clicando\s+aqui|clique\s+aqui|acesse\s+(?:o|a)|canal\s+|videoaula|assista\s+(?:ao|à|a))\b/i.test(compact)
+    && compact.length < 220;
+}
+
+function isStandaloneHeading(content: string, block: BlockForChunking) {
+  const compact = normalizeForInspection(content);
+  if (block.type === 'SECTION' || block.type === 'SUBSECTION') return true;
+  if (compact.length > 90 || /[.!?:]/.test(compact) || QUESTION_INTENT.test(compact)) return false;
+  const words = compact.match(/[A-Za-zÀ-ÿ]{2,}/g) ?? [];
+  return words.length > 0 && words.length <= 9;
+}
+
+function isTruncatedFragment(content: string, blockType: string) {
+  const compact = normalizeForInspection(content);
+  if (/\b\d{1,3}[.)]\s*\([^)]{0,30}$/.test(compact)) return true;
+  if (blockType === 'QUESTION' && compact.length < 100) {
+    const hasQuestionMark = /\?/.test(compact);
+    const looksLikeTrailingPedagogicalFragment = /^\s*(?:solu[cç][aã]o|gabarito|resposta|alternativa)\b/i.test(compact);
+    return (!hasQuestionMark && /[.)]$/.test(compact) && !QUESTION_INTENT.test(compact)) || looksLikeTrailingPedagogicalFragment;
+  }
+  if (blockType === 'SOLUTION' && compact.length < 100) {
+    const hasReasoning = /[=⇒→]|\b(?:logo|portanto|assim|temos|porque|substituindo|calculando)\b/i.test(compact);
+    const looksLikeDirectAnswer = /\b(?:resposta|gabarito|alternativa|valor)\b/i.test(compact)
+      || /:\s*[^()\n]{1,40}(?:[.!?])?$/u.test(compact)
+      || /(?:^|\s)[A-E]$/u.test(compact);
+    return !hasReasoning && !looksLikeDirectAnswer;
+  }
+  return false;
+}
+
 function isPlausibleAnswerKey(content: string) {
   return Array.from(normalizeForInspection(content).matchAll(ANSWER_KEY_ENTRIES)).length > 0;
 }
@@ -112,23 +159,38 @@ function isPlausibleAnswerKey(content: string) {
 export function getBlockEligibility(block: BlockForChunking): ChunkEligibility {
   const content = normalizeForInspection(block.normalizedContent);
   if (!content) return { eligible: false, reason: 'EMPTY_CONTENT' };
-  if (!block.isComplete) return { eligible: false, reason: 'INVALID_QUESTION' };
+  if (!block.isComplete) {
+    if (block.type !== 'QUESTION' || content.length < 20) {
+      return { eligible: false, reason: 'INVALID_QUESTION' };
+    }
+
+    // Questões incompletas ainda são evidência útil para a montagem do
+    // question span e para a reconstrução por IA com blocos vizinhos.
+    return { eligible: true };
+  }
   if (/^--\s*\d+\s+of\s+\d+\s*--$/i.test(content)) return { eligible: false, reason: 'PAGE_MARKER' };
   if (UNSUPPORTED_BLOCK_TYPES.has(block.type)) return { eligible: false, reason: 'UNSUPPORTED_BLOCK_TYPE' };
   if (isTableOfContents(content)) return { eligible: false, reason: 'TABLE_OF_CONTENTS' };
   if (isHeaderOrFooter(content)) return { eligible: false, reason: 'HEADER_OR_FOOTER' };
+  if (isPromotionalFragment(content)) return { eligible: false, reason: 'PROMOTIONAL_FRAGMENT' };
+  if (isStandaloneHeading(content, block)) return { eligible: false, reason: 'STANDALONE_HEADING' };
+  if (isTruncatedFragment(content, block.type)) return { eligible: false, reason: 'TRUNCATED_FRAGMENT' };
   if (isIsolatedAlternative(content)) return { eligible: false, reason: 'ISOLATED_ALTERNATIVE' };
   if (block.type !== 'ANSWER_KEY' && block.type !== 'SOLUTION' && isAnswerKeyFragment(content)) return { eligible: false, reason: 'ANSWER_KEY_FRAGMENT' };
   if (block.type === 'ANSWER_KEY' && !isPlausibleAnswerKey(content)) return { eligible: false, reason: 'ANSWER_KEY_FRAGMENT' };
   if (block.type === 'FORMULA' && isFormulaFragment(content)) return { eligible: false, reason: 'FORMULA_FRAGMENT' };
-  if (block.type !== 'ANSWER_KEY' && content.length < MIN_RETRIEVAL_CHUNK_CHARS) return { eligible: false, reason: 'TOO_SHORT' };
+  if (!SHORT_VALID_TYPES.has(block.type) && content.length < EMBEDDING_MIN_CHARS) return { eligible: false, reason: 'TOO_SHORT' };
+  if (!SHORT_VALID_TYPES.has(block.type) && countTokens(content) < EMBEDDING_MIN_TOKENS) return { eligible: false, reason: 'TOO_SHORT' };
   return { eligible: true };
 }
 
 export function getChunkEligibility(chunk: ChunkSlice, block: BlockForChunking): ChunkEligibility {
   const content = normalizeForInspection(chunk.content);
   if (!content) return { eligible: false, reason: 'EMPTY_CONTENT' };
-  if (block.type !== 'ANSWER_KEY' && content.length < MIN_RETRIEVAL_CHUNK_CHARS) return { eligible: false, reason: 'TOO_SHORT' };
+  if (!SHORT_VALID_TYPES.has(block.type) && content.length < EMBEDDING_MIN_CHARS) return { eligible: false, reason: 'TOO_SHORT' };
+  if (!SHORT_VALID_TYPES.has(block.type) && countTokens(content) < EMBEDDING_MIN_TOKENS) return { eligible: false, reason: 'TOO_SHORT' };
+  if (isPromotionalFragment(content)) return { eligible: false, reason: 'PROMOTIONAL_FRAGMENT' };
+  if (isTruncatedFragment(content, block.type)) return { eligible: false, reason: 'TRUNCATED_FRAGMENT' };
   if (block.type !== 'QUESTION' && isIsolatedAlternative(content)) return { eligible: false, reason: 'ISOLATED_ALTERNATIVE' };
   if (block.type !== 'ANSWER_KEY' && block.type !== 'SOLUTION' && isAnswerKeyFragment(content)) return { eligible: false, reason: 'ANSWER_KEY_FRAGMENT' };
   return { eligible: true };
@@ -154,8 +216,13 @@ function splitSemanticUnits(content: string, blockType: string): SemanticUnit[] 
   }).filter((unit) => unit.content.length > 0);
 }
 
-function splitOversizedUnit(unit: SemanticUnit): SemanticUnit[] {
-  if (countTokens(unit.content) <= CHUNK_TOKEN_LIMIT) return [unit];
+function tokenLimitForBlock(blockType: string) {
+  return PARENT_CHUNK_TYPES.has(blockType) ? PARENT_CHUNK_MAX_TOKENS : CHILD_CHUNK_MAX_TOKENS;
+}
+
+function splitOversizedUnit(unit: SemanticUnit, blockType: string): SemanticUnit[] {
+  const tokenLimit = tokenLimitForBlock(blockType);
+  if (countTokens(unit.content) <= tokenLimit) return [unit];
 
   const sentenceSpans = Array.from(unit.content.matchAll(/[^.!?\n]+(?:[.!?]+(?=\s|$)|$)/g)).map((match) => ({
     start: match.index ?? 0,
@@ -169,7 +236,7 @@ function splitOversizedUnit(unit: SemanticUnit): SemanticUnit[] {
         charEnd: unit.charStart + span.end,
       }))
       .filter((sentence) => sentence.content.length > 0)
-      .flatMap(splitOversizedUnit);
+      .flatMap((sentence) => splitOversizedUnit(sentence, blockType));
   }
 
   const wordSpans = Array.from(unit.content.matchAll(/\S+/g)).map((match) => ({
@@ -183,7 +250,7 @@ function splitOversizedUnit(unit: SemanticUnit): SemanticUnit[] {
     let wordEnd = wordStart + 1;
     while (
       wordEnd < wordSpans.length
-      && countTokens(unit.content.slice(wordSpans[wordStart]!.start, wordSpans[wordEnd]!.end)) <= CHUNK_TOKEN_LIMIT
+      && countTokens(unit.content.slice(wordSpans[wordStart]!.start, wordSpans[wordEnd]!.end)) <= tokenLimit
     ) {
       wordEnd += 1;
     }
@@ -212,7 +279,8 @@ function splitOversizedUnit(unit: SemanticUnit): SemanticUnit[] {
   return pieces;
 }
 
-function addSemanticOverlap(slices: SemanticUnit[]) {
+function addSemanticOverlap(slices: SemanticUnit[], blockType: string) {
+  const tokenLimit = tokenLimitForBlock(blockType);
   return slices.map((slice, index) => {
     if (index === 0) return slice;
 
@@ -230,7 +298,7 @@ function addSemanticOverlap(slices: SemanticUnit[]) {
 
     let content = `${previousText.slice(Math.max(0, overlapStart - previous.charStart))} ${slice.content}`.trim();
     let adjustedStart = overlapStart;
-    while (countTokens(content) > CHUNK_TOKEN_LIMIT && adjustedStart < slice.charStart) {
+    while (countTokens(content) > tokenLimit && adjustedStart < slice.charStart) {
       const nextWord = content.search(/\s+/);
       if (nextWord < 0) break;
       content = content.slice(nextWord).trim();
@@ -242,7 +310,12 @@ function addSemanticOverlap(slices: SemanticUnit[]) {
 }
 
 export function splitBlockContent(content: string, blockType: string) {
-  const units = splitSemanticUnits(content, blockType).flatMap(splitOversizedUnit);
+  if (blockType === 'QUESTION') {
+    const normalized = content.trim();
+    return normalized ? [{ content: normalized, charStart: 0, charEnd: content.length }] : [];
+  }
+  const tokenLimit = tokenLimitForBlock(blockType);
+  const units = splitSemanticUnits(content, blockType).flatMap((unit) => splitOversizedUnit(unit, blockType));
   const packed: SemanticUnit[] = [];
   let current: SemanticUnit | null = null;
 
@@ -253,7 +326,7 @@ export function splitBlockContent(content: string, blockType: string) {
     }
 
     const combined = content.slice(current.charStart, unit.charEnd).trim();
-    if (countTokens(combined) <= CHUNK_TOKEN_LIMIT) {
+    if (countTokens(combined) <= tokenLimit) {
       current = { ...current, content: combined, charEnd: unit.charEnd };
     } else {
       packed.push(current);
@@ -262,12 +335,23 @@ export function splitBlockContent(content: string, blockType: string) {
   }
 
   if (current) packed.push(current);
-  return addSemanticOverlap(packed);
+  return addSemanticOverlap(packed, blockType);
+}
+
+function isUsefulSectionTitle(value: string) {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  if (compact.length < 3 || compact.length > 100) return false;
+  if (/^[A-Z]$/i.test(compact) || /[=<>]/.test(compact)) return false;
+  const words = compact.match(/[A-Za-zÀ-ÿ]{2,}/g) ?? [];
+  const numbers = compact.match(/\b\d+(?:[.,]\d+)?\b/g) ?? [];
+  return words.length > 0 && numbers.length <= 2;
 }
 
 function sectionPathToText(sectionPath: unknown) {
   if (!Array.isArray(sectionPath)) return '';
-  return sectionPath.filter((item): item is string => typeof item === 'string').join(' > ');
+  return sectionPath
+    .filter((item): item is string => typeof item === 'string' && isUsefulSectionTitle(item))
+    .join(' > ');
 }
 
 export function buildEmbeddingContent(
@@ -301,10 +385,14 @@ export class ChunkService {
       event: 'monitor.document_chunks_started',
       documentId,
       documentTextId,
-      tokenLimit: CHUNK_TOKEN_LIMIT,
+      tokenLimit: PARENT_CHUNK_MAX_TOKENS,
+      parentTargetTokens: PARENT_CHUNK_TARGET_TOKENS,
+      parentMaxTokens: PARENT_CHUNK_MAX_TOKENS,
+      childTargetTokens: CHILD_CHUNK_TARGET_TOKENS,
+      childMaxTokens: CHILD_CHUNK_MAX_TOKENS,
       overlapTokens: CHUNK_OVERLAP_TOKENS,
       tokenizerVersion: TOKENIZER_VERSION,
-      embeddingVersion: EMBEDDING_VERSION,
+      embeddingVersion: DOCUMENT_EMBEDDING_VERSION,
     });
 
     const source = await findDocumentBlocksForChunking(documentId, documentTextId);
@@ -314,11 +402,16 @@ export class ChunkService {
     const chunks: DocumentChunkInput[] = [];
     const skippedBlocksByReason: Partial<Record<ChunkSkipReason, number>> = {};
     const skippedChunksByReason: Partial<Record<ChunkSkipReason, number>> = {};
+    let incompleteQuestionBlocksIncluded = 0;
     for (const block of blocks) {
       const blockEligibility = getBlockEligibility(block);
       if (!blockEligibility.eligible) {
         skippedBlocksByReason[blockEligibility.reason] = (skippedBlocksByReason[blockEligibility.reason] ?? 0) + 1;
         continue;
+      }
+
+      if (block.type === 'QUESTION' && !block.isComplete) {
+        incompleteQuestionBlocksIncluded += 1;
       }
 
       const blockChunks = splitBlockContent(block.normalizedContent, block.type);
@@ -330,12 +423,11 @@ export class ChunkService {
           return;
         }
 
-        const isAnswerKey = block.type === 'ANSWER_KEY';
         chunks.push({
           blockId: block.id,
           chunkIndexInBlock: persistedChunkIndex,
           content: chunk.content,
-          embeddingContent: isAnswerKey ? null : buildEmbeddingContent(block, chunk.content, {
+          embeddingContent: block.type === 'ANSWER_KEY' ? null : buildEmbeddingContent(block, chunk.content, {
             documentTitle: source.context.documentTitle,
             subjectName: source.context.subjectName,
           }),
@@ -344,7 +436,7 @@ export class ChunkService {
           charEnd: chunk.charEnd,
           pageStart: block.pageStart,
           pageEnd: block.pageEnd,
-          status: isAnswerKey ? 'READY' : 'EMBEDDING_PENDING',
+          status: getInitialChunkStatus(),
         });
         persistedChunkIndex += 1;
       });
@@ -362,6 +454,7 @@ export class ChunkService {
       chunkCount: chunks.length,
       maxTokenCount: Math.max(...chunks.map((chunk) => chunk.tokenCount), 0),
       answerKeyChunks: chunks.filter((chunk) => chunk.embeddingContent === null).length,
+      incompleteQuestionBlocksIncluded,
       skippedBlockCount: Object.values(skippedBlocksByReason).reduce((total, count) => total + count, 0),
       skippedBlocksByReason,
       skippedChunkCount: Object.values(skippedChunksByReason).reduce((total, count) => total + count, 0),
@@ -381,6 +474,6 @@ export class ChunkService {
       durationMs: Date.now() - startedAt,
     });
 
-    return { ...chunkResult, blockCount: blocks.length, embeddingVersion: EMBEDDING_VERSION, tokenizerVersion: TOKENIZER_VERSION };
+    return { ...chunkResult, blockCount: blocks.length, embeddingVersion: DOCUMENT_EMBEDDING_VERSION, tokenizerVersion: TOKENIZER_VERSION };
   }
 }

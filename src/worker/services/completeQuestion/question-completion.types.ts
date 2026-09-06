@@ -1,3 +1,5 @@
+import type { QuestionContextPack } from '../question-context-pack.service.js';
+
 export type QuestionAlternative = { label: string; text: string };
 
 export type QuestionTopicInput = {
@@ -11,10 +13,15 @@ export type QuestionTopicInput = {
 };
 
 export type QuestionAgentFailure = {
-  agent: 'ALTERNATIVES' | 'CORRECT_ANSWER' | 'EXPLANATION' | 'CATEGORY';
+  agent: 'ALTERNATIVES' | 'CORRECT_ANSWER' | 'EXPLANATION' | 'CATEGORY' | 'QUALITY_REVIEW' | 'BOUNDARY' | 'SOURCE_RECONSTRUCTION' | 'CORRECTION' | 'NORMALIZATION';
   code: string;
   model: string;
   finishReason?: string | null;
+  statusCode?: number;
+  retryAfterMs?: number;
+  nativeFinishReason?: string | null;
+  validationError?: unknown;
+  responseContent?: string | null;
   attempts: number;
 };
 
@@ -27,10 +34,12 @@ export type QuestionCompletionInput = {
   correctAnswer: string | null;
   explanation: string | null;
   sourceContext: string;
+  contextPack?: QuestionContextPack;
+  skipDocumentRag?: boolean;
 };
 
 export type CompletionGeneration = {
-  generationType: 'ALTERNATIVES' | 'CORRECT_ANSWER' | 'EXPLANATION' | 'CATEGORY';
+  generationType: 'ALTERNATIVES' | 'CORRECT_ANSWER' | 'EXPLANATION' | 'CATEGORY' | 'CORRECTION' | 'NORMALIZATION';
   model: string;
   inputSnapshot: Record<string, unknown>;
   outputSnapshot: Record<string, unknown>;

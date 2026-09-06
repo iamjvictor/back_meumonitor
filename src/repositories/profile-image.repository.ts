@@ -17,10 +17,21 @@ export class ProfileImageRepository {
     const { data } = supabaseAdmin.storage.from(BUCKET).getPublicUrl(path);
     const avatarUrl = data.publicUrl;
 
-    await prisma.teacher.update({
-      where: { userId },
-      data: { avatarUrl },
-    });
+    const teacher = await prisma.teacher.findUnique({ where: { userId } });
+    if (teacher) {
+      await prisma.teacher.update({
+        where: { userId },
+        data: { avatarUrl },
+      });
+    }
+
+    const student = await prisma.student.findUnique({ where: { userId } });
+    if (student) {
+      await prisma.student.update({
+        where: { userId },
+        data: { avatarUrl },
+      });
+    }
 
     return { avatarUrl };
   }

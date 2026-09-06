@@ -56,7 +56,9 @@ type DraftBlock = {
 
 type SectionContext = { level: number; blockIndex: number; title: string };
 
-const QUESTION_START = /^(?:quest[aã]o\s*)?(\d{1,3})[.)]\s*(?:\(([^)\n]{2,100})\))?\s*(.*)$/i;
+// Aceita a pontuação tipográfica comum em PDFs exportados (hífen, travessão
+// e dois-pontos), além dos marcadores tradicionais `1.` e `1)`.
+const QUESTION_START = /^(?:quest[aã]o\s*)?(\d{1,3})\s*(?:[.)]|[-–—:])\s*(?:\(([^)\n]{2,100})\))?\s*(.*)$/i;
 const NUMBERED_SECTION = /^(\d+(?:\.\d+)*)(?:\s+|[-:])(.+)$/;
 const YEAR_PATTERN = /\b(19\d{2}|20\d{2})\b/;
 const ALTERNATIVE = /^(?:(?:[A-Ea-e][.)])|(?:\([A-Ea-e]\))|[ⒶⒷⒸⒹⒺ]|(?:\(?[1-5]\)?[.)]))\s+.+/;
@@ -65,6 +67,8 @@ const ANSWER_KEY_ITEM = new RegExp(`^(\\d{1,3})\\s*[.)-]\\s*${ANSWER_VALUE}\\s*$
 const ANSWER_KEY_ENTRY = new RegExp(`(?:^|\\s)\\d{1,3}\\s*[.)-]\\s*${ANSWER_VALUE}(?=\\s|$)`, 'gim');
 const LOOSE_ANSWER_KEY_ENTRY = new RegExp(`(?:^|\\s)\\d{1,3}\\s*[.)]\\s*${ANSWER_VALUE}`, 'gim');
 const SOLUTION_MARKER = /^(?:(?:quest[aã]o\s*)?(\d{1,3})[.)]\s*)?(?:resolu[cç][aã]o|solu[cç][aã]o|coment[aá]rio)\b/i;
+const QUESTION_SIGNAL = /\?|\b(?:calcule|calcular|determine|encontre|resolva|assinale|marque|indique|qual|quanto|quantos|quantas|verifique|sabe-se|é\s+igual\s+a|corresponde\s+a)\b/i;
+const INLINE_ALTERNATIVE = /(?:^|\s)(?:[A-Ea-e][.)]|\([A-Ea-e]\)|[ⒶⒷⒸⒹⒺ])\s*/g;
 
 function isTableOfContentsLine(line: string) {
   return /^(?:sum[aá]rio|conte[uú]do)\b/i.test(line)
@@ -87,10 +91,24 @@ function headingForLine(line: string): { type: BlockType; level: number; title: 
   // A numeric prefix by itself is not a heading. PDF extraction commonly
   // produces lines such as "2 h 30 min" or "1 pessoas..." mid-question.
   const isHierarchicalNumber = Boolean(numbered?.[1]?.includes('.'));
-  const isTitleCase = /^[A-ZÀ-Ý]/.test(title);
+  const words = title.match(/[A-Za-zÀ-ÿ]{2,}/g) ?? [];
+  const significantWords = words.filter((word) => !/^(?:a|as|o|os|e|de|da|das|do|dos|em|na|nas|no|nos|para)$/i.test(word));
+  const titleCaseWords = significantWords.filter((word) => /^[A-ZÀ-Ý]/.test(word));
+  const isTitleCase = significantWords.length >= 2
+    && titleCaseWords.length / significantWords.length >= 0.6;
   const hasSectionKeyword = /^(?:cap[ií]tulo|unidade|m[oó]dulo|se[cç][aã]o|parte|t[oó]pico)/i.test(title);
-  const looksLikeSentence = /[?.!]$/.test(title) || /\b(?:[a-zà-ÿ]{3,}\s+){5,}/.test(title);
-  if (numbered && (isHierarchicalNumber || isTitleCase || hasSectionKeyword) && !looksLikeSentence) {
+  const hasDidacticHeadingKeyword = /^(?:introdu[cç][aã]o|exerc[ií]cios?|atividades?|defini[cç][aã]o|conceito|propriedades?|grandezas?|regra\s+de|raz[aã]o|propor[cç][aã]o)\b/i.test(title);
+  const hasEquationOrTableData = /[=<>]|(?:\b\d+(?:[.,]\d+)?\b.*){3,}/.test(title);
+  const looksLikeSentence = QUESTION_SIGNAL.test(title)
+    || /[?.!]$/.test(title)
+    || /:\s*$/.test(title)
+    || words.length > 10;
+  if (
+    numbered
+    && (isHierarchicalNumber || hasSectionKeyword || hasDidacticHeadingKeyword || isTitleCase)
+    && !hasEquationOrTableData
+    && !looksLikeSentence
+  ) {
     const level = (numbered[1] ?? '').split('.').length;
     return { type: level > 1 ? 'SUBSECTION' : 'SECTION', level, title: (numbered[2] ?? '').trim() };
   }
@@ -100,7 +118,8 @@ function headingForLine(line: string): { type: BlockType; level: number; title: 
 
 function didacticTypeForLine(line: string): BlockType | null {
   if (/^(defini[cç][aã]o|conceito)\b/i.test(line)) return 'DEFINITION';
-  if (/^(exemplo|exerc[ií]cio|aplica[cç][aã]o)\b/i.test(line)) return 'EXAMPLE';
+  if (/^(exemplo|exerc[ií]cio|aplica[cç][aã]o|desafio)\b/i.test(line)) return 'EXAMPLE';
+  if (/^(?:escala|densidade\s+demogr[aá]fica|velocidade\s+m[eé]dia|vaz[aã]o)\s*:/i.test(line)) return 'DEFINITION';
   if (/^(f[oó]rmula|propriedade|teorema|regra)\b/i.test(line)) return 'FORMULA';
   if (/^(aten[cç][aã]o|observa[cç][aã]o|importante)\b/i.test(line)) return 'THEORY';
   if (/^(tabela|quadro)\b/i.test(line)) return 'TABLE';
@@ -111,7 +130,11 @@ function didacticTypeForLine(line: string): BlockType | null {
 function startsWithQuestionStatement(text: string) {
   const match = text.match(QUESTION_START);
   const statement = match?.[3]?.trim() ?? '';
-  return /^[A-Za-zÀ-ÿ]{2,}\b/.test(statement);
+  // A numbered continuation extracted from the end of a previous line often
+  // looks like "9) e podemos...". It must not open a new question block.
+  // Real question statements in the source documents start with a capitalized
+  // word (or an institution/parenthesized marker).
+  return /^(?:[A-ZÀ-Ý][A-Za-zÀ-ÿ]{1,}|\()/.test(statement);
 }
 
 function looksLikeInstructionalList(candidate: BlockCandidate, nextElements: DocumentElement[]) {
@@ -123,6 +146,7 @@ function looksLikeInstructionalList(candidate: BlockCandidate, nextElements: Doc
 function classifyLine(text: string): DocumentElementType {
   if (isTableOfContentsLine(text)) return 'TABLE_OF_CONTENTS';
   if (/^(gabarito|respostas?)\s*[:\-]?\s*$/i.test(text)) return 'ANSWER_KEY_START';
+  if (/^(gabarito|respostas?)\b/i.test(text)) return 'ANSWER_KEY_START';
   if (SOLUTION_MARKER.test(text)) return 'SOLUTION_MARKER';
   const answerEntries = answerKeyItemCount(text);
   // A regular paragraph can contain several numeric references. Treat it as a
@@ -140,14 +164,27 @@ function classifyLine(text: string): DocumentElementType {
 function isHeaderOrFooterLine(line: string) {
   const compact = line.trim();
   if (/^\d{1,3}$/.test(compact)) return true;
-  if (/^(?:c[aá]ssio\s+vidigal|ifmg\s*[–-]?\s*campus\s+ouro\s+preto)$/i.test(compact)) return true;
+  if (/^(?:c[aá]ssio\s+vidigal(?:\s+\d{1,3})?|ifmg\s*[–-]?\s*campus\s+ouro\s+preto)$/i.test(compact)) return true;
   return /^raz[aã]o,?\s+propor[cç][aã]o,?\s+regras?\s+de\s+tr[eê]s(?:\s+e\s+porcentagem)?$/i.test(compact);
 }
 
 function stripInlineHeadersFooters(line: string) {
   return line
     .replace(/(?:matem[aá]tica\s+financeira\s*\d*\s*)?raz[aã]o,?\s+propor[cç][aã]o,?\s+regras?\s+de\s+tr[eê]s\s+e\s+porcentagem\s+c[aá]ssio\s+vidigal\s*\d*\s*ifmg\s*[–-]\s*campus\s+ouro\s+preto\s*/gi, '')
-    .replace(/c[aá]ssio\s+vidigal\s*\d+\s*ifmg\s*[–-]\s*campus\s+ouro\s+preto\s*/gi, '');
+    .replace(/c[aá]ssio\s+vidigal\s*\d+\s*ifmg\s*[–-]\s*campus\s+ouro\s+preto\s*/gi, '')
+    .replace(/raz[aã]o,?\s+propor[cç][aã]o,?\s+e\s+regra\s+de\s+tr[eê]s/gi, '');
+}
+
+function stripPromotionalCallouts(line: string) {
+  return line
+    .replace(/(?:em\s+caso\s+de\s+d[uú]vidas,?\s*)?(?:confira\s+|veja\s+)?(?:a\s+)?resolu[cç][aã]o(?:\s+dessa?\s+quest[aã]o|\s+para\s+voc[eê])?\s+(?:no\s+canal\s+[^,.]+,?\s*)?clicando\s+aqui\.?/gi, ' ')
+    .replace(/(?:confira|acesse|assista)\s+(?:a|ao|à)\s+(?:resolu[cç][aã]o|videoaula)[^.!?]{0,100}[.!?]?/gi, ' ');
+}
+
+function isPromotionalLine(line: string) {
+  const compact = line.replace(/\s+/g, ' ').trim();
+  return /\b(?:clique|clicando|canal\s+n[aã]o|assista|v[ií]deo|videozinho|deixe\s+o\s+like|compartilh[ae]|inscreva-se)\b/i.test(compact)
+    || /^(?:antes\s+de\s+voc[eê]\s+praticar|d[uú]vidas?\s+sobre)\b/i.test(compact);
 }
 
 function createElements(pages: StructuralPage[]) {
@@ -158,17 +195,17 @@ function createElements(pages: StructuralPage[]) {
     const content = page.normalizedContent?.trim() ?? '';
     let pageOffset = 0;
     for (const rawLine of content.split('\n')) {
-      const cleanedLine = stripInlineHeadersFooters(rawLine);
+      const cleanedLine = stripPromotionalCallouts(stripInlineHeadersFooters(rawLine));
       // PDF extraction often keeps "40) ... Resolução" on one visual line.
       // Split the structural marker before classification so it can close an
       // answer key instead of becoming part of its final entry.
-      const segments = cleanedLine.split(/(?=(?:(?:quest[aã]o\s*)?\d{1,3}[.)]\s*)?(?:resolu[cç][aã]o|solu[cç][aã]o|coment[aá]rio)\b)/i);
+      const segments = cleanedLine.split(/(?=(?:(?<!\d)(?:(?:quest[aã]o\s*)?\d{1,3}[.)]\s+(?=[A-ZÁÀÃÂÉÊÍÓÔÕÚÇ(\[]))|(?:(?:quest[aã]o\s*)?\d{1,3}[.)]\s*)?(?:resolu[cç][aã]o|solu[cç][aã]o|coment[aá]rio)\b))/i);
       let segmentOffset = 0;
       for (const segment of segments) {
         const text = segment.trim();
         const lineStart = documentOffset + pageOffset + segmentOffset + segment.indexOf(text);
         const lineEnd = lineStart + text.length;
-        if (text && !isHeaderOrFooterLine(text)) {
+        if (text && !isHeaderOrFooterLine(text) && !isPromotionalLine(text)) {
           elements.push({ type: classifyLine(text), text, pageNumber: page.pageNumber, charStart: lineStart, charEnd: lineEnd });
         }
         segmentOffset += segment.length;
@@ -222,7 +259,9 @@ function hasMinimumQuestionStatement(candidate: BlockCandidate, nextElements: Do
   const combined = `${statement} ${continuation}`.trim();
   if (combined.length < 40) return false;
   if (/^\d{1,4}\s*(?:[a-z]+|%)?$/i.test(statement)) return false;
-  return (combined.match(/[A-Za-zÀ-ÿ]{2,}/g)?.length ?? 0) >= 6;
+  const wordCount = combined.match(/[A-Za-zÀ-ÿ]{2,}/g)?.length ?? 0;
+  const alternativeCount = Array.from(combined.matchAll(INLINE_ALTERNATIVE)).length;
+  return wordCount >= 6 || (wordCount >= 3 && alternativeCount >= 3);
 }
 
 function canOpenQuestion(
@@ -230,17 +269,23 @@ function canOpenQuestion(
   context: { nextElements: DocumentElement[]; sectionPath: string[]; state: ParserState },
 ) {
   if (context.state === 'IN_ANSWER_KEY') return false;
+  if (!startsWithQuestionStatement(candidate.text)) return false;
   if (looksLikeAnswerKeyItem(candidate, context.nextElements)) return false;
   if (looksLikeInstructionalList(candidate, context.nextElements)) return false;
   if (!hasMinimumQuestionStatement(candidate, context.nextElements)) return false;
 
   const match = candidate.text.match(QUESTION_START);
+  // Zero is commonly produced when PDF extraction separates the last digit
+  // of a previous example from its continuation (for example "40. Qual...").
+  // It is not a valid exercise number in this document family and opening a
+  // block here loses the preceding statement.
+  if (match?.[1] === '0' && !match[2]) return false;
   const localText = [candidate.text, ...context.nextElements.slice(0, 6).map((element) => element.text)].join(' ');
   const sectionSuggestsExercises = context.sectionPath.some((section) => /exerc[ií]cio|quest[aã]o|atividade|lista|prova|simulado/i.test(section));
   const hasQuestionSignal = /\?|\b(?:calcule|calcular|determine|encontre|resolva|assinale|marque|indique|qual|quanto|julgue|escreva|fa[cç]a|em\s+quantos?)\b/i.test(localText);
   const hasAlternativesNearby = context.nextElements.slice(0, 6).some((element) => element.type === 'ALTERNATIVE');
   const hasInstitution = Boolean(match?.[2]);
-  const hasQuestionMarker = /^\s*(?:quest[aã]o\s*)?\d{1,3}[.)]/i.test(candidate.text);
+  const hasQuestionMarker = QUESTION_START.test(candidate.text);
 
   return hasQuestionMarker && (sectionSuggestsExercises || hasQuestionSignal || hasAlternativesNearby || hasInstitution);
 }
@@ -255,9 +300,21 @@ function isValidatedQuestionStart(elements: DocumentElement[], index: number, st
     }));
 }
 
+function isStrongExplicitQuestionStart(elements: DocumentElement[], index: number, state: ParserState) {
+  const element = elements[index];
+  if (!element || state === 'IN_ANSWER_KEY' || !QUESTION_START.test(element.text)) return false;
+  const candidate = candidateFrom(element, 'QUESTION_START', 0.92);
+  const nextElements = elements.slice(index + 1);
+  const localText = [element.text, ...nextElements.slice(0, 3).map((item) => item.text)].join(' ');
+  return startsWithQuestionStatement(element.text)
+    && hasMinimumQuestionStatement(candidate, nextElements)
+    && !looksLikeAnswerKeyItem(candidate, nextElements)
+    && QUESTION_SIGNAL.test(localText);
+}
+
 function canOpenAnswerKey(candidate: BlockCandidate, nextElements: DocumentElement[]) {
   if (/[=·]/.test(candidate.text)) return false;
-  if (/^(?:gabarito|respostas?|key|alternativas?\s+corretas?)\s*[:\-]?\s*$/i.test(candidate.text)) return true;
+  if (/^(?:gabarito|respostas?|key|alternativas?\s+corretas?)\b/i.test(candidate.text)) return true;
   const entries = [candidate.text, ...nextElements.slice(0, 5).map((element) => element.text)]
     .reduce((count, line) => count + answerKeyItemCount(line), 0);
   return entries >= 3;
@@ -311,12 +368,35 @@ function structuralValidity(type: BlockType, content: string) {
       || /\((?:enem|uerj|vunesp|fgv|cesgranrio|puc|uf|unesp|unicamp|obmep|esaf)/i.test(statement)
       || /^\d{1,3}[.)]\s/.test(compact);
     if (!hasQuestionContext && statement.length < 80) return { isComplete: false, reason: 'QUESTION_WITHOUT_CONTEXT' };
+    const mathOnlyLines = content.split('\n').filter((line) => {
+      const wordsInLine = line.match(/[A-Za-zÀ-ÿ]{2,}/g)?.length ?? 0;
+      const mathSymbols = line.match(/[=+*/^%√]|\d/g)?.length ?? 0;
+      const alternativesInLine = Array.from(line.matchAll(INLINE_ALTERNATIVE)).length;
+      return alternativesInLine === 0 && wordsInLine < 2 && mathSymbols >= 3;
+    });
+    if (mathOnlyLines.length >= 2 && Array.from(content.matchAll(INLINE_ALTERNATIVE)).length >= 2) {
+      return { isComplete: false, reason: 'QUESTION_MATH_LAYOUT_CORRUPTED' };
+    }
+    if (/\b(?:raz[aã]o|fra[cç][aã]o|propor[cç][aã]o)\s+(?:é\s+)?igual\s+(?:à|a)\s+(?:raz[aã]o|fra[cç][aã]o|propor[cç][aã]o)?\s*[.=]\s*(?:$|\n)/im.test(content)
+      || /\b(?:fra[cç][aã]o|propor[cç][aã]o)\s*=\s*\.\s*(?:$|\n)/im.test(content)) {
+      return { isComplete: false, reason: 'QUESTION_MISSING_MATH_OPERAND' };
+    }
   }
   if (type === 'ANSWER_KEY' && !isPlausibleAnswerKeyContent(content)) {
     return { isComplete: false, reason: 'ANSWER_KEY_CONTAINS_NON_ANSWER_CONTENT' };
   }
   if (!compact) return { isComplete: false, reason: 'EMPTY_BLOCK' };
   return { isComplete: true, reason: null };
+}
+
+function inferQuestionBlock(type: BlockType, content: string) {
+  if (type !== 'THEORY' && type !== 'EXAMPLE') return null;
+  const firstLine = content.split('\n').find((line) => line.trim())?.trim() ?? '';
+  const numbered = firstLine.match(QUESTION_START);
+  const alternativeCount = Array.from(content.matchAll(INLINE_ALTERNATIVE)).length;
+  const questionLike = QUESTION_SIGNAL.test(content);
+  if (!(numbered && questionLike) && !(questionLike && alternativeCount >= 3)) return null;
+  return numbered ? questionMetadata(firstLine) : { questionNumber: null, institution: null, examYear: null };
 }
 
 function contentFrom(parts: DocumentElement[]) {
@@ -337,26 +417,33 @@ export function assembleStructuralBlocks(documentId: string, documentTextId: str
     const normalizedContent = contentFrom(current.parts);
     const first = current.parts[0]!;
     const last = current.parts.at(-1)!;
-    const validity = structuralValidity(current.type, normalizedContent);
+    const inferredQuestion = inferQuestionBlock(current.type, normalizedContent);
+    const finalType: BlockType = inferredQuestion ? 'QUESTION' : current.type;
+    const finalQuestionNumber = inferredQuestion?.questionNumber ?? current.questionNumber;
+    const validity = finalType === 'QUESTION' && finalQuestionNumber === '0'
+      ? { isComplete: false, reason: 'QUESTION_NUMBER_ZERO' }
+      : structuralValidity(finalType, normalizedContent);
     blocks.push({
       documentId,
       documentTextId,
       parentBlockId: current.parentBlockIndex === null ? null : String(current.parentBlockIndex),
       blockIndex: blocks.length,
-      type: current.type,
+      type: finalType,
       title: current.title,
       rawContent: normalizedContent,
       normalizedContent,
       sectionPath: current.sectionPath,
-      questionNumber: current.questionNumber,
-      institution: current.institution,
-      examYear: current.examYear,
+      questionNumber: finalQuestionNumber,
+      institution: inferredQuestion?.institution ?? current.institution,
+      examYear: inferredQuestion?.examYear ?? current.examYear,
       pageStart: first.pageNumber,
       pageEnd: last.pageNumber,
       charStart: first.charStart,
       charEnd: last.charEnd,
-      detectionMethod: current.detectionMethod,
-      confidence: validity.isComplete ? current.confidence : Math.min(current.confidence, 0.6),
+      detectionMethod: inferredQuestion ? 'HEURISTIC' : current.detectionMethod,
+      confidence: validity.isComplete
+        ? (inferredQuestion ? Math.min(current.confidence, 0.78) : current.confidence)
+        : Math.min(current.confidence, 0.6),
       status: validity.isComplete ? 'READY' : 'NEEDS_REVIEW',
       isComplete: validity.isComplete,
       incompleteReason: validity.reason,
@@ -391,6 +478,21 @@ export function assembleStructuralBlocks(documentId: string, documentTextId: str
     if (state === 'IN_ANSWER_KEY' && shouldCloseAnswerKey(element, { elements, index, sectionPath: sectionPath() })) {
       flush();
       state = 'IN_CONTENT';
+    }
+
+    if (isStrongExplicitQuestionStart(elements, index, state)) {
+      flush();
+      const metadata = questionMetadata(element.text);
+      open('QUESTION', element, {
+        title: element.text,
+        questionNumber: metadata?.questionNumber ?? null,
+        institution: metadata?.institution ?? null,
+        examYear: metadata?.examYear ?? null,
+        detectionMethod: 'REGEX',
+        confidence: 0.92,
+      });
+      state = 'IN_QUESTION';
+      continue;
     }
 
     const heading = headingForLine(element.text);

@@ -38,4 +38,18 @@ export class MonitorService {
   async deleteTopic(userId: string, monitorId: string, subjectId: string, topicId: string) {
     return this.repository.deleteTopic(userId, monitorId, subjectId, topicId);
   }
+
+  async update(
+    userId: string,
+    monitorId: string,
+    data: {
+      name?: string;
+      description?: string | null;
+      avatarUrl?: string | null;
+      detailedDescription?: string | null;
+      status?: 'DRAFT' | 'READY_TO_PUBLISH' | 'PUBLISHED' | 'PAUSED' | 'ARCHIVED';
+    }
+  ) {
+    return this.repository.update(userId, monitorId, data);
+  }
 }

@@ -84,6 +84,116 @@ export async function reviewQuestion(
   });
 }
 
+export async function createQuestion(
+  userId: string,
+  monitorId: string,
+  input: QuestionReviewInput & { text: string },
+) {
+  console.log('[ContentReviewRepository] createQuestion called with:', {
+    userId,
+    monitorId,
+    subjectId: input.subjectId,
+    primaryTopicId: input.primaryTopicId,
+    textLength: input.text?.length,
+    alternativesCount: input.alternatives?.length,
+    correctAnswer: input.correctAnswer,
+    explanationLength: input.explanation?.length,
+  });
+
+  const teacher = await prisma.teacher.findUnique({ where: { userId }, select: { id: true } });
+  if (!teacher) {
+    console.error('[ContentReviewRepository] Teacher not found for userId:', userId);
+    throw new Error('TEACHER_NOT_FOUND');
+  }
+
+  const monitor = await prisma.monitor.findFirst({
+    where: { id: monitorId, teacherId: teacher.id },
+    include: { subjects: true },
+  });
+  if (!monitor) {
+    console.error('[ContentReviewRepository] Monitor not found for monitorId:', monitorId);
+    throw new Error('MONITOR_NOT_FOUND');
+  }
+
+  let topicId = input.primaryTopicId || null;
+  let subjectId = input.subjectId || null;
+
+  if (topicId) {
+    const topic = await prisma.monitorTopic.findFirst({
+      where: { id: topicId },
+      select: { id: true, subjectId: true },
+    });
+    if (topic) {
+      subjectId = topic.subjectId;
+    }
+  }
+
+  if (!subjectId && monitor.subjects[0]) {
+    subjectId = monitor.subjects[0].id;
+  }
+
+  if (!subjectId) {
+    console.error('[ContentReviewRepository] Question requires a valid subjectId');
+    throw new Error('QUESTION_REQUIRES_SUBJECT');
+  }
+
+  const crypto = await import('crypto');
+  const textHash = crypto.createHash('sha256').update(`${topicId || ''}:${input.text}`).digest('hex');
+  const sourceKey = `manual:${teacher.id}:${Date.now()}:${Math.random().toString(36).substring(2, 7)}`;
+
+  const alternatives = input.alternatives || [];
+  const status = input.status || 'APPROVED';
+
+  console.log('[ContentReviewRepository] Creating Question record in Prisma...', {
+    teacherId: teacher.id,
+    monitorId,
+    subjectId,
+    topicId,
+    textHash,
+    sourceKey,
+    status,
+  });
+
+  const newQuestion = await prisma.question.create({
+    data: {
+      teacherId: teacher.id,
+      monitorId,
+      subjectId,
+      topicId,
+      text: input.text,
+      alternatives: alternatives as Prisma.InputJsonValue,
+      correctAnswer: input.correctAnswer || null,
+      correctAnswerOrigin: 'TEACHER',
+      explanation: input.explanation || null,
+      explanationOrigin: 'TEACHER',
+      statementOrigin: 'TEACHER_CREATED',
+      kind: 'MULTIPLE_CHOICE',
+      textHash,
+      sourceKey,
+      status,
+      reviewedAt: new Date(),
+      reviewedBy: teacher.id,
+      ...(topicId
+        ? {
+            topicLinks: {
+              create: {
+                topicId,
+                isPrimary: true,
+              },
+            },
+          }
+        : {}),
+    },
+    include: {
+      topic: { select: { id: true, name: true } },
+      subject: { select: { id: true, name: true } },
+    },
+  });
+
+  console.log('[ContentReviewRepository] Question created successfully! ID:', newQuestion.id);
+  return newQuestion;
+}
+
 
 function parseAlternatives(value: Prisma.JsonValue) {
   return Array.isArray(value) ? value : [];

@@ -10,7 +10,8 @@ export const registerTeacherSchema = z.object({
   customArea: z.string().trim().max(120).optional(),
   bio: z.string().trim().max(2000).optional(),
   pageSlug: z.string().trim().min(3).max(60).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-  avatarUrl: z.string().url().max(2048).optional(),
+  avatarUrl: z.string().optional().nullable(),
+  bannerUrl: z.string().optional().nullable(),
   instagram: z.string().trim().max(120).optional(),
   tiktok: z.string().trim().max(120).optional(),
   youtube: z.string().trim().max(120).optional(),
@@ -23,15 +24,33 @@ export const registerTeacherProfileSchema = z.object({
   customArea: z.string().trim().max(120).optional(),
   bio: z.string().trim().max(2000).optional(),
   pageSlug: z.string().trim().min(3).max(60).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-  avatarUrl: z.string().url().max(2048).optional(),
+  avatarUrl: z.string().optional().nullable(),
+  bannerUrl: z.string().optional().nullable(),
   instagram: z.string().trim().max(120).optional(),
   tiktok: z.string().trim().max(120).optional(),
   youtube: z.string().trim().max(120).optional(),
   agreedTerms: z.boolean().optional().default(true),
 });
 
+export const updateTeacherProfileSchema = z.object({
+  fullName: z.string().trim().min(2).max(120).optional(),
+  email: z.string().trim().email().max(254).optional(),
+  phone: z.string().trim().max(30).optional().nullable(),
+  username: z.string().trim().min(3).max(60).optional(),
+  area: z.string().trim().min(2).max(120).optional(),
+  customArea: z.string().trim().max(120).optional().nullable(),
+  bio: z.string().trim().max(2000).optional().nullable(),
+  pageSlug: z.string().trim().min(3).max(60).optional(),
+  avatarUrl: z.string().optional().nullable(),
+  bannerUrl: z.string().optional().nullable(),
+  instagram: z.string().trim().max(120).optional().nullable(),
+  tiktok: z.string().trim().max(120).optional().nullable(),
+  youtube: z.string().trim().max(120).optional().nullable(),
+});
+
 export type RegisterTeacherInput = z.infer<typeof registerTeacherSchema>;
 export type RegisterTeacherProfileInput = z.infer<typeof registerTeacherProfileSchema>;
+export type UpdateTeacherProfileInput = z.infer<typeof updateTeacherProfileSchema>;
 
 export interface RegisteredTeacher {
   id: string;

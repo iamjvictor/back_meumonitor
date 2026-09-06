@@ -3,19 +3,19 @@ import {
   searchReadyKnowledgeChunks,
   type KnowledgeSearchInput,
 } from '../repositories/knowledge-retrieval.repository.js';
-
-export type KnowledgeCitation = {
-  documentId: string;
-  blockId: string | null;
-  chunkId: string;
-  similarity: number;
-  content: string;
-  pageStart: number | null;
-  pageEnd: number | null;
-  sectionPath: unknown;
-};
+import {
+  HybridRetrievalService,
+  type HybridRetrievalCandidate,
+  type HybridRetrievalInput,
+  type HybridRetrievalResult,
+} from '../worker/services/hybrid-retrieval.service.js';
 
 export class KnowledgeRetrievalService {
+  private readonly hybrid = new HybridRetrievalService({
+    searchCandidates: async (input: HybridRetrievalInput) => searchReadyKnowledgeChunks(input),
+    loadKnowledgeContext: async (candidates: HybridRetrievalCandidate[]) => loadKnowledgeContext(candidates as any),
+  });
+
   async search(input: KnowledgeSearchInput) {
     const startedAt = Date.now();
     console.log('Busca vetorial de conhecimento iniciada', {
@@ -28,40 +28,27 @@ export class KnowledgeRetrievalService {
       embeddingDimensions: input.queryEmbedding.length,
     });
 
-    const candidates = await searchReadyKnowledgeChunks(input);
-    const uniqueCandidates = candidates.filter((candidate, index, all) => (
-      candidate.blockId === null
-        || all.findIndex((item) => item.blockId === candidate.blockId) === index
-    ));
-    const blocks = await loadKnowledgeContext(uniqueCandidates);
-    const blockMap = new Map(blocks.map((block) => [block.id, block]));
-
-    const citations: KnowledgeCitation[] = uniqueCandidates.map((candidate) => {
-      const block = candidate.blockId ? blockMap.get(candidate.blockId) : undefined;
-      return {
-        documentId: candidate.documentId,
-        blockId: candidate.blockId,
-        chunkId: candidate.chunkId,
-        similarity: Number(candidate.similarity),
-        content: candidate.content,
-        pageStart: block?.pageStart ?? null,
-        pageEnd: block?.pageEnd ?? null,
-        sectionPath: block?.sectionPath ?? null,
-      };
-    });
+    const result = await this.hybrid.search({
+      ...input,
+      queryText: input.queryText ?? '',
+      documentId: input.documentId,
+      questionDocumentId: input.documentId,
+      questionBlockId: input.questionBlockId,
+      sectionPath: input.sectionPath,
+      blockTypes: input.blockTypes,
+      supportOnly: input.supportOnly,
+      excludeChunkIds: input.excludeChunkIds,
+      excludedBlockIds: input.excludedBlockIds,
+    } as HybridRetrievalInput);
 
     console.log('Busca vetorial de conhecimento concluida', {
       event: 'monitor.knowledge_retrieval_completed',
-      candidateCount: candidates.length,
-      uniqueBlockCount: uniqueCandidates.length,
-      contextBlockCount: blocks.length,
+      candidateCount: result.candidates.length,
+      uniqueBlockCount: result.citations.length,
+      contextBlockCount: result.contextBlocks.length,
       durationMs: Date.now() - startedAt,
     });
 
-    return {
-      citations,
-      contextBlocks: blocks,
-      candidates,
-    };
+    return result as HybridRetrievalResult;
   }
 }

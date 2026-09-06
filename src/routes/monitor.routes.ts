@@ -9,6 +9,7 @@ export async function monitorRoutes(app: FastifyInstance) {
 
   app.get('/', { onRequest: authMiddleware }, controller.listMine.bind(controller));
   app.get<{ Params: { monitorId: string } }>('/:monitorId', { onRequest: authMiddleware }, controller.getMine.bind(controller));
+  app.patch<{ Params: { monitorId: string }; Body: { name?: string; description?: string | null } }>('/:monitorId', { onRequest: authMiddleware }, controller.update.bind(controller));
   app.post('/', {
     onRequest: authMiddleware,
     config: { rateLimit: { max: 10, timeWindow: '15 minutes' } },

@@ -14,7 +14,14 @@ export async function findBlockTopicClassificationData(documentId: string, docum
     where: { id: documentId },
     select: {
       id: true,
+      subjectId: true,
       topicId: true,
+      subject: {
+        select: {
+          monitorId: true,
+          monitor: { select: { teacherId: true } },
+        },
+      },
       topicLinks: {
         select: {
           topic: {

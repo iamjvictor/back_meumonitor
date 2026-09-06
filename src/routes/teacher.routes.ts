@@ -8,5 +8,7 @@ export async function teacherRoutes(app: FastifyInstance) {
   const controller = new TeacherController(new TeacherService(new TeacherRepository()));
 
   app.get('/me', { onRequest: authMiddleware }, controller.getMyProfile.bind(controller));
+  app.put('/me', { onRequest: authMiddleware }, controller.updateMyProfile.bind(controller));
+  app.patch('/me', { onRequest: authMiddleware }, controller.updateMyProfile.bind(controller));
   app.get('/public/:teacherSlug', controller.getPublicProfile.bind(controller));
 }

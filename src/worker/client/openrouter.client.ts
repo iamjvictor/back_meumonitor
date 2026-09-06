@@ -1,4 +1,5 @@
 import { env } from '../../config/env.js';
+import { aiModels } from '../../config/ai-models.config.js';
 
 const EMBEDDINGS_URL = 'https://openrouter.ai/api/v1/embeddings';
 
@@ -16,10 +17,22 @@ type EmbeddingResponse = {
 type ChatResponse = {
   choices?: Array<{
     finish_reason?: string | null;
+    native_finish_reason?: string | null;
     message?: { content?: string | null };
   }>;
   error?: { message?: string };
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+};
+
+export type StructuredRequestUsage = {
+  model: string;
+  schemaName: string;
+  statusCode: number;
+  durationMs: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  finishReason?: string | null;
 };
 
 type ChatMessage = {
@@ -29,9 +42,24 @@ type ChatMessage = {
 
 export class StructuredCompletionError extends Error {
   constructor(
-    readonly code: 'MODEL_OUTPUT_TRUNCATED' | 'EMPTY_RESPONSE' | 'INVALID_JSON' | 'INVALID_SCHEMA' | 'PROVIDER_ERROR',
+    readonly code:
+      | 'MODEL_OUTPUT_TRUNCATED'
+      | 'EMPTY_RESPONSE'
+      | 'INVALID_JSON'
+      | 'INVALID_SCHEMA'
+      | 'RATE_LIMITED'
+      | 'PROVIDER_ERROR'
+      | 'TIMEOUT',
     message: string,
-    readonly details: { model: string; finishReason?: string | null } = { model: '' },
+    readonly details: {
+      model: string;
+      finishReason?: string | null;
+      nativeFinishReason?: string | null;
+      statusCode?: number;
+      retryAfterMs?: number;
+      validationError?: unknown;
+      responseContent?: string | null;
+    } = { model: '' },
   ) {
     super(message);
   }
@@ -134,6 +162,10 @@ export class OpenRouterClient {
     model?: string;
     temperature?: number;
     requireParameters?: boolean;
+    validate?: (value: unknown) => T;
+    onUsage?: (usage: StructuredRequestUsage) => void;
+    timeoutMs?: number;
+    signal?: AbortSignal;
   }): Promise<T> {
     if (!env.OPENROUTER_API_KEY) {
       throw new Error('OPENROUTER_API_KEY nao configurada para o worker.');
@@ -151,12 +183,19 @@ export class OpenRouterClient {
     });
 
     const requestStartedAt = Date.now();
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), input.timeoutMs ?? env.OPENROUTER_STRUCTURED_TIMEOUT_MS);
+    input.signal?.addEventListener('abort', () => controller.abort(), { once: true });
+    if (input.signal?.aborted) controller.abort();
+    let response: Response;
+    try {
+      response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
         'Content-Type': 'application/json',
       },
+        signal: controller.signal,
       body: JSON.stringify({
         model: input.model ?? env.OPENROUTER_QUESTION_MODEL,
         messages: input.messages,
@@ -166,32 +205,73 @@ export class OpenRouterClient {
           type: 'json_schema',
           json_schema: { name: input.schemaName, strict: true, schema: input.schema },
         },
+        reasoning: { effort: aiModels.reasoningEffort },
         ...(input.requireParameters ? { provider: { require_parameters: true } } : {}),
       }),
-    });
+      });
+      const payload = (await Promise.race([
+        response.json(),
+        new Promise<never>((_, reject) => controller.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })),
+      ])) as ChatResponse;
+      return await this.parseStructuredResponse(payload, response, input, requestStartedAt);
+    } catch (error) {
+      if (controller.signal.aborted) throw new StructuredCompletionError('TIMEOUT', 'OpenRouter excedeu o timeout configurado.', { model: input.model ?? env.OPENROUTER_QUESTION_MODEL });
+      throw error;
+    } finally { clearTimeout(timeout); }
+  }
 
-    const payload = (await response.json()) as ChatResponse;
+  private async parseStructuredResponse<T>(payload: ChatResponse, response: Response, input: {
+    messages: ChatMessage[]; schemaName: string; schema: Record<string, unknown>; validate?: (value: unknown) => T;
+    model?: string; onUsage?: (usage: StructuredRequestUsage) => void;
+  }, requestStartedAt: number): Promise<T> {
     const content = payload.choices?.[0]?.message?.content;
+
+    const durationMs = Date.now() - requestStartedAt;
+    const usage: StructuredRequestUsage = {
+      model: input.model ?? env.OPENROUTER_QUESTION_MODEL,
+      schemaName: input.schemaName,
+      statusCode: response.status,
+      durationMs,
+      promptTokens: payload.usage?.prompt_tokens ?? 0,
+      completionTokens: payload.usage?.completion_tokens ?? 0,
+      totalTokens: payload.usage?.total_tokens ?? 0,
+      finishReason: payload.choices?.[0]?.finish_reason,
+    };
+    input.onUsage?.(usage);
 
     console.log('Resposta da analise estruturada recebida', {
       event: 'monitor.llm_structured_response_received',
       statusCode: response.status,
       ok: response.ok,
-      durationMs: Date.now() - requestStartedAt,
+      durationMs,
       responseChars: content?.length || 0,
       promptTokens: payload.usage?.prompt_tokens,
       completionTokens: payload.usage?.completion_tokens,
       totalTokens: payload.usage?.total_tokens,
       finishReason: payload.choices?.[0]?.finish_reason,
+      nativeFinishReason: payload.choices?.[0]?.native_finish_reason,
     });
 
     const model = input.model ?? env.OPENROUTER_QUESTION_MODEL;
     const finishReason = payload.choices?.[0]?.finish_reason;
     if (!response.ok) {
+      const statusCode = response.status;
+      if (statusCode === 429) {
+        throw new StructuredCompletionError(
+          'RATE_LIMITED',
+          `OpenRouter chat falhou (${statusCode}): ${payload.error?.message || 'too many requests'}`,
+          {
+            model,
+            finishReason,
+            statusCode,
+            retryAfterMs: parseRetryAfterMilliseconds(response.headers.get('retry-after')),
+          },
+        );
+      }
       throw new StructuredCompletionError(
         'PROVIDER_ERROR',
-        `OpenRouter chat falhou (${response.status}): ${payload.error?.message || 'resposta vazia'}`,
-        { model, finishReason },
+        `OpenRouter chat falhou (${statusCode}): ${payload.error?.message || 'resposta vazia'}`,
+        { model, finishReason, statusCode },
       );
     }
 
@@ -203,7 +283,7 @@ export class OpenRouterClient {
       );
     }
 
-    if (!content) {
+    if (!content?.trim()) {
       throw new StructuredCompletionError(
         'EMPTY_RESPONSE',
         'OpenRouter nao retornou conteudo estruturado.',
@@ -212,8 +292,34 @@ export class OpenRouterClient {
     }
 
     try {
-      return JSON.parse(content) as T;
+      const parsed = JSON.parse(content) as unknown;
+      if (!input.validate) {
+        return parsed as T;
+      }
+      try {
+        return input.validate(parsed);
+      } catch (error) {
+        console.log('Resposta estruturada nao atende ao schema local', {
+          event: 'monitor.llm_structured_schema_validation_failed',
+          schemaName: input.schemaName,
+          error,
+        });
+        throw new StructuredCompletionError(
+          'INVALID_SCHEMA',
+          'OpenRouter retornou uma resposta que nao atende ao schema local.',
+          {
+            model,
+            finishReason,
+            nativeFinishReason: payload.choices?.[0]?.native_finish_reason,
+            validationError: serializeValidationError(error),
+            responseContent: content?.slice(0, 4_000) ?? null,
+          },
+        );
+      }
     } catch (error) {
+      if (error instanceof StructuredCompletionError) {
+        throw error;
+      }
       console.log('Resposta estruturada nao era um JSON valido', {
         event: 'monitor.llm_structured_json_parse_failed',
         schemaName: input.schemaName,
@@ -226,4 +332,27 @@ export class OpenRouterClient {
       );
     }
   }
+}
+
+function serializeValidationError(error: unknown) {
+  if (!error || typeof error !== 'object') return error;
+  const candidate = error as { message?: unknown; issues?: unknown };
+  return {
+    message: typeof candidate.message === 'string' ? candidate.message : undefined,
+    issues: Array.isArray(candidate.issues) ? candidate.issues.slice(0, 8) : undefined,
+  };
+}
+
+function parseRetryAfterMilliseconds(value: string | null) {
+  if (!value) return undefined;
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.round(seconds * 1000);
+  }
+
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return undefined;
+
+  return Math.max(0, timestamp - Date.now());
 }

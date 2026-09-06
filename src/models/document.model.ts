@@ -4,7 +4,7 @@ export const documentTagSchema = z.enum(['knowledge', 'questions', 'flashcards']
 
 export const uploadDocumentSchema = z.object({
   subjectId: z.string().uuid(),
-  topicId: z.string().uuid().optional(),
+  topicId: z.string().uuid(),
   tag: documentTagSchema,
 });
 
