@@ -3,6 +3,7 @@ import { authMiddleware } from '../middleware/auth.middleware.js';
 import { StudentRepository } from '../repositories/student.repository.js';
 import { TeacherRepository } from '../repositories/teacher.repository.js';
 import { prisma } from '../lib/prisma.js';
+import { pickRandomAvailable } from '../services/flashcard-selection.js';
 import { calculateNextSrsState } from '../services/srs.service.js';
 
 const studentRepo = new StudentRepository();
@@ -58,42 +59,10 @@ export async function protectedRoutes(app: FastifyInstance) {
     };
   });
 
-  app.put('/student/profile', async (request, reply) => {
-    if (!request.user) throw new Error('Authenticated user was not attached to request');
-
-    const body = request.body as {
-      fullName?: string;
-      phone?: string;
-      cpf?: string;
-      avatarUrl?: string;
-    };
-
-    const updated = await studentRepo.upsertStudent({
-      userId: request.user.id,
-      email: request.user.email || '',
-      fullName: body.fullName?.trim() || request.user.fullName || 'Estudante',
-      phone: body.phone?.trim(),
-      cpf: body.cpf?.trim(),
-      avatarUrl: body.avatarUrl?.trim(),
-    });
-
-    return reply.send({
-      data: {
-        userId: updated.userId,
-        email: updated.email,
-        fullName: updated.fullName,
-        whatsapp: updated.phone || null,
-        cpf: updated.cpf || null,
-        avatarUrl: updated.avatarUrl || null,
-        role: updated.role,
-      },
-    });
-  });
-
   app.get('/student/flashcards/random', async (request, reply) => {
     if (!request.user) throw new Error('Authenticated user was not attached to request');
 
-    const { monitorId } = request.query as { monitorId?: string };
+    const { monitorId, excludeFlashcardId } = request.query as { monitorId?: string; excludeFlashcardId?: string };
 
     // 1. Obter ou criar perfil de estudante para vincular progresso do SRS
     let student = await studentRepo.findByUserId(request.user.id);
@@ -161,11 +130,14 @@ export async function protectedRoutes(app: FastifyInstance) {
     let cardStatus: 'DUE' | 'NEW' | 'LEARNED' = 'NEW';
 
     // PRIORIDADE 1: Cards VENCIDOS para revisão (nextReviewAt <= agora)
-    const dueProgress = await prisma.studentFlashcardProgress.findFirst({
+    const dueProgresses = await prisma.studentFlashcardProgress.findMany({
       where: {
         studentId: student.id,
         nextReviewAt: { lte: now },
-        flashcard: monitorFilter,
+        flashcard: {
+          ...monitorFilter,
+          ...(excludeFlashcardId ? { id: { not: excludeFlashcardId } } : {}),
+        },
       },
       orderBy: { nextReviewAt: 'asc' },
       include: {
@@ -179,14 +151,17 @@ export async function protectedRoutes(app: FastifyInstance) {
       },
     });
 
+    const dueProgress = pickRandomAvailable(dueProgresses, excludeFlashcardId, Math.random, (progress) => progress.flashcard.id);
+
     if (dueProgress) {
       targetFlashcard = dueProgress.flashcard;
       cardStatus = 'DUE';
     } else {
       // PRIORIDADE 2: Cards NOVOS (nunca respondidos pelo aluno)
-      const unreviewedCard = await prisma.flashcard.findFirst({
+      const unreviewedCards = await prisma.flashcard.findMany({
         where: {
           ...monitorFilter,
+          ...(excludeFlashcardId ? { id: { not: excludeFlashcardId } } : {}),
           progresses: {
             none: { studentId: student.id },
           },
@@ -198,6 +173,8 @@ export async function protectedRoutes(app: FastifyInstance) {
         },
       });
 
+      const unreviewedCard = pickRandomAvailable(unreviewedCards, excludeFlashcardId);
+
       if (unreviewedCard) {
         targetFlashcard = unreviewedCard;
         cardStatus = 'NEW';
@@ -207,7 +184,10 @@ export async function protectedRoutes(app: FastifyInstance) {
     // FALLBACK: Se não houver pendentes no SRS, pegar um flashcard aleatório dos monitores permitidos
     if (!targetFlashcard) {
       const fallbackCards = await prisma.flashcard.findMany({
-        where: monitorFilter,
+        where: {
+          ...monitorFilter,
+          ...(excludeFlashcardId ? { id: { not: excludeFlashcardId } } : {}),
+        },
         include: {
           subject: { select: { id: true, name: true } },
           topic: { select: { id: true, name: true } },
@@ -217,7 +197,24 @@ export async function protectedRoutes(app: FastifyInstance) {
       });
 
       if (fallbackCards.length > 0) {
-        targetFlashcard = fallbackCards[Math.floor(Math.random() * fallbackCards.length)];
+        targetFlashcard = pickRandomAvailable(fallbackCards, excludeFlashcardId);
+        cardStatus = 'LEARNED';
+      }
+    }
+
+    // Se o monitor possui somente o card atual, não deixar a sessão sem card.
+    if (!targetFlashcard && excludeFlashcardId) {
+      const onlyAvailableCard = await prisma.flashcard.findFirst({
+        where: { ...monitorFilter, id: excludeFlashcardId },
+        include: {
+          subject: { select: { id: true, name: true } },
+          topic: { select: { id: true, name: true } },
+          monitor: { select: { id: true, name: true } },
+        },
+      });
+
+      if (onlyAvailableCard) {
+        targetFlashcard = onlyAvailableCard;
         cardStatus = 'LEARNED';
       }
     }
@@ -241,6 +238,9 @@ export async function protectedRoutes(app: FastifyInstance) {
     return reply.send({
       data: {
         id: targetFlashcard.id,
+        monitorId: targetFlashcard.monitorId,
+        subjectId: targetFlashcard.subjectId,
+        topicId: targetFlashcard.topicId,
         subject: topicName ? `${subjectName} • ${topicName}` : subjectName,
         topic: topicName || 'Geral',
         monitorName: targetFlashcard.monitor?.name || 'Meu Monitor AI',
@@ -413,7 +413,4 @@ export async function protectedRoutes(app: FastifyInstance) {
     });
   });
 }
-
-
-
 
