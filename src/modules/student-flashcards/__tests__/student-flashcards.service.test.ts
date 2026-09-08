@@ -41,3 +41,45 @@ test('rejeita revisão quando flashcard não existe', async () => {
     userId: 'user-1', flashcardId: 'missing', rating: 'GOOD',
   }), /FLASHCARD_NOT_FOUND/);
 });
+
+test('seleciona primeiro um flashcard vencido', async () => {
+  const service = createStudentFlashcardsService({
+    access: {
+      async assertMonitorAccess() { return { studentId: 'student-1' }; },
+      async getAccessibleMonitorIds() { return { studentId: 'student-1', monitorIds: ['monitor-1'] }; },
+    },
+    repository: {
+      async findFlashcard() { return null; },
+      async findProgress() { return null; },
+      async saveProgress(input) { return input; },
+      async createReviewLog() {},
+      async findDueCards() { return [{ id: 'due-1', monitorId: 'monitor-1', cardStatus: 'DUE' as const }]; },
+      async findUnreviewedCards() { return []; },
+      async findFallbackCards() { return []; },
+    },
+  });
+
+  const result = await service.getRandomFlashcard({ userId: 'user-1' });
+
+  assert.deepEqual(result, { id: 'due-1', monitorId: 'monitor-1', cardStatus: 'DUE' });
+});
+
+test('rejeita monitor solicitado sem acesso', async () => {
+  const service = createStudentFlashcardsService({
+    access: {
+      async assertMonitorAccess() { throw new Error('MONITOR_NOT_ACCESSIBLE'); },
+      async getAccessibleMonitorIds() { return { studentId: 'student-1', monitorIds: ['monitor-1'] }; },
+    },
+    repository: {
+      async findFlashcard() { return null; },
+      async findProgress() { return null; },
+      async saveProgress(input) { return input; },
+      async createReviewLog() {},
+      async findDueCards() { return []; },
+      async findUnreviewedCards() { return []; },
+      async findFallbackCards() { return []; },
+    },
+  });
+
+  await assert.rejects(service.getRandomFlashcard({ userId: 'user-1', monitorId: 'monitor-2' }), /MONITOR_NOT_ACCESSIBLE/);
+});

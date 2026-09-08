@@ -50,3 +50,15 @@ test('cancela assinatura e matrícula ativas do aluno', async () => {
 
   assert.deepEqual(calls, ['subscription:student-1:monitor-1', 'enrollment:student-1:monitor-1']);
 });
+
+test('lista monitores acessíveis por assinatura, matrícula e propriedade', async () => {
+  const service = createStudentAccessService(repository({
+    listSubscribedMonitorIds: async () => ['monitor-1'],
+    listEnrolledMonitorIds: async () => ['monitor-2'],
+    listOwnedMonitorIds: async () => ['monitor-3'],
+  }));
+
+  const result = await service.getAccessibleMonitorIds({ userId: 'user-1' });
+
+  assert.deepEqual(result, { studentId: 'student-1', monitorIds: ['monitor-1', 'monitor-2', 'monitor-3'] });
+});

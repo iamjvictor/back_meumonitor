@@ -5,6 +5,7 @@ import { StudentFlashcardsController } from '../student-flashcards.controller.js
 test('controller delega a revisão ao serviço', async () => {
   const calls: unknown[] = [];
   const controller = new StudentFlashcardsController({
+    async getRandomFlashcard() { return { id: 'card-1', monitorId: 'monitor-1', cardStatus: 'NEW' as const }; },
     async reviewFlashcard(input) {
       calls.push(input);
       return { flashcardId: input.flashcardId, rating: input.rating };

@@ -5,6 +5,9 @@ export interface StudentAccessRepository {
   ownsMonitor(userId: string, monitorId: string): Promise<boolean>;
   cancelSubscription(studentId: string, monitorId: string): Promise<void>;
   cancelEnrollment(studentId: string, monitorId: string): Promise<void>;
+  listSubscribedMonitorIds?(studentId: string): Promise<string[]>;
+  listEnrolledMonitorIds?(studentId: string): Promise<string[]>;
+  listOwnedMonitorIds?(userId: string): Promise<string[]>;
 }
 
 export class StudentNotFoundError extends Error {
@@ -49,6 +52,16 @@ export function createStudentAccessService(repository: StudentAccessRepository) 
         repository.cancelSubscription(student.id, input.monitorId),
         repository.cancelEnrollment(student.id, input.monitorId),
       ]);
+    },
+
+    async getAccessibleMonitorIds(input: { userId: string }) {
+      const student = await getStudent(input.userId);
+      const [subscriptions, enrollments, owned] = await Promise.all([
+        repository.listSubscribedMonitorIds?.(student.id) ?? [],
+        repository.listEnrolledMonitorIds?.(student.id) ?? [],
+        repository.listOwnedMonitorIds?.(input.userId) ?? [],
+      ]);
+      return { studentId: student.id, monitorIds: Array.from(new Set([...subscriptions, ...enrollments, ...owned])) };
     },
   };
 }

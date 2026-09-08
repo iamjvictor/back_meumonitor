@@ -40,4 +40,19 @@ export class PrismaStudentAccessRepository implements StudentAccessRepository {
       data: { status: 'CANCELLED' },
     });
   }
+
+  async listSubscribedMonitorIds(studentId: string) {
+    const records = await prisma.studentSubscription.findMany({ where: { studentId, status: 'active' }, select: { monitorId: true } });
+    return records.map((record) => record.monitorId);
+  }
+
+  async listEnrolledMonitorIds(studentId: string) {
+    const records = await prisma.studentEnrollment.findMany({ where: { studentId, status: 'ACTIVE' }, select: { monitorId: true } });
+    return records.map((record) => record.monitorId);
+  }
+
+  async listOwnedMonitorIds(userId: string) {
+    const records = await prisma.monitor.findMany({ where: { teacher: { userId } }, select: { id: true } });
+    return records.map((record) => record.id);
+  }
 }
