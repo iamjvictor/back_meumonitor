@@ -32,7 +32,7 @@ function headerValue(value: string | string[] | undefined) {
 }
 
 export class StudentPurchaseController {
-  constructor(private readonly service: StudentPurchaseService) {}
+  constructor(private readonly service: Pick<StudentPurchaseService, 'createPurchase' | 'simulatedCheckout' | 'simulatedConfirmation' | 'listPurchases' | 'listSubscriptions'>) {}
 
   private domainError(error: unknown) {
     const code = error instanceof Error ? error.message : 'INTERNAL_SERVER_ERROR';

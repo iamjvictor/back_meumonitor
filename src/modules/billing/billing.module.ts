@@ -36,7 +36,7 @@ export function createBillingModule(config: BillingModuleConfig) {
   const webhookController = new WebhookController(webhookService);
   const simulatedConfirmation = new SimulatedConfirmationService(repository, webhookService);
   const service = new CheckoutService(repository, customerRepository, provider, config, simulatedConfirmation);
-  const controller = new CheckoutController(service as any);
+  const controller = new CheckoutController(service);
   const subscriptionRepository = new SubscriptionRepository();
   const subscriptionService = new SubscriptionService(subscriptionRepository, provider, config);
   const subscriptionController = new SubscriptionController(subscriptionService, subscriptionRepository);
