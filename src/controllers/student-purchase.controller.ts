@@ -58,7 +58,8 @@ export class StudentPurchaseController {
     log('monitor.student_purchase_http_create_started', { requestId: request.id, userId, monitorCount: parsed.data.monitorIds.length, hasIdempotencyKey: Boolean(key) });
     try {
       const data = await this.service.createPurchase(userId, parsed.data, key ?? '');
-      log('monitor.student_purchase_http_create_completed', { requestId: request.id, purchaseId: data.purchaseId, status: data.status, checkoutUrlCreated: Boolean(data.checkoutUrl) });
+      const result = data as { purchaseId?: string; id?: string; status?: string; checkoutUrl?: string };
+      log('monitor.student_purchase_http_create_completed', { requestId: request.id, purchaseId: result.purchaseId ?? result.id, status: result.status, checkoutUrlCreated: Boolean(result.checkoutUrl) });
       return reply.code(201).send({ data });
     } catch (error) { throw this.domainError(error); }
   }

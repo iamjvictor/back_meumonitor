@@ -2,6 +2,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { getSignupLogData, getSignupRequestLogData, signupSchema } from '../models/auth.model.js';
 import { AuthRepositoryError } from '../repositories/auth.repository.js';
 import { AuthService } from '../services/auth.service.js';
+import { AppError } from '../core/errors/app-error.js';
 
 export class AuthController {
   constructor(private readonly service: AuthService) {}
@@ -25,7 +26,7 @@ export class AuthController {
         durationMs: Date.now() - startedAt,
         invalidFields: Object.keys(result.error.flatten().fieldErrors),
       });
-      return reply.code(400).send({ error: 'VALIDATION_ERROR', message: 'Dados basicos de cadastro invalidos.', details: result.error.flatten().fieldErrors });
+      throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, publicMessage: 'Dados basicos de cadastro invalidos.', internalDetails: result.error.flatten().fieldErrors });
     }
 
     console.log('Signup validado', { event: 'auth.signup.validation_succeeded', requestId: request.id, ...getSignupLogData(result.data) });
@@ -74,18 +75,15 @@ export class AuthController {
             requestId: request.id,
             durationMs: Date.now() - startedAt,
           });
-          return reply.code(503).send({
-            error: 'EMAIL_PROVIDER_DISABLED',
-            message: 'O login por e-mail esta desativado no provedor de autenticacao.',
-          });
+          throw new AppError({ code: 'EMAIL_PROVIDER_DISABLED', statusCode: 503, publicMessage: 'O login por e-mail esta desativado no provedor de autenticacao.' });
         }
 
-        console.log('Signup rejeitado pelo Auth', { event: 'auth.signup.auth_rejected', requestId: request.id, durationMs: Date.now() - startedAt, error });
-        return reply.code(409).send({ error: 'SIGNUP_UNAVAILABLE', message: 'Nao foi possivel criar a conta.' });
+        console.log('Signup rejeitado pelo Auth', { event: 'auth.signup.auth_rejected', requestId: request.id, durationMs: Date.now() - startedAt, providerError: error.providerCode ?? 'unknown' });
+        throw new AppError({ code: 'SIGNUP_UNAVAILABLE', statusCode: 409, publicMessage: 'Nao foi possivel criar a conta.', cause: error });
       }
 
-      console.log('Falha inesperada no signup', { event: 'auth.signup.failed', requestId: request.id, durationMs: Date.now() - startedAt, error });
-      return reply.code(500).send({ error: 'INTERNAL_SERVER_ERROR', message: 'Nao foi possivel criar a conta.' });
+      console.log('Falha inesperada no signup', { event: 'auth.signup.failed', requestId: request.id, durationMs: Date.now() - startedAt });
+      throw new AppError({ code: 'INTERNAL_SERVER_ERROR', statusCode: 500, publicMessage: 'Nao foi possivel criar a conta.', cause: error });
     }
   }
 }

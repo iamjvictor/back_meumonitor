@@ -25,7 +25,7 @@ test('responde AppError e registra somente metadados seguros', () => {
       publicMessage: 'Acesso negado.',
       internalDetails: { token: 'secret-token', password: 'secret-password' },
     }),
-    { id: 'request-1', method: 'GET', url: '/private', headers: { authorization: 'Bearer secret-token' } },
+    { id: 'request-1', method: 'GET', url: '/private' },
     reply,
   );
 
@@ -41,8 +41,8 @@ test('converte erro inesperado e ZodError para contratos seguros', () => {
   const unexpectedReply = replySpy();
   const validationReply = replySpy();
 
-  handler(new Error('database password secret'), { id: 'request-2', method: 'POST', url: '/x', headers: {} }, unexpectedReply);
-  handler(z.object({ email: z.string().email() }).safeParse({ email: 'invalid' }).error, { id: 'request-3', method: 'POST', url: '/x', headers: {} }, validationReply);
+  handler(new Error('database password secret'), { id: 'request-2', method: 'POST', url: '/x' }, unexpectedReply);
+  handler(z.object({ email: z.string().email() }).safeParse({ email: 'invalid' }).error, { id: 'request-3', method: 'POST', url: '/x' }, validationReply);
 
   assert.equal(unexpectedReply.statusCode, 500);
   assert.deepEqual(unexpectedReply.payload, { error: { code: 'INTERNAL_SERVER_ERROR', message: 'Erro interno do servidor.', details: null } });
