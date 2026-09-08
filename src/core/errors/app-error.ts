@@ -13,7 +13,9 @@ export class AppError extends Error {
   readonly internalDetails?: unknown;
 
   constructor(options: AppErrorOptions) {
-    super(options.publicMessage, { cause: options.cause });
+    // Mantém o código no Error.message para compatibilidade de logs/testes legados;
+    // a mensagem pública continua exclusivamente em publicMessage.
+    super(options.code, { cause: options.cause });
     this.name = 'AppError';
     this.code = options.code;
     this.statusCode = options.statusCode;

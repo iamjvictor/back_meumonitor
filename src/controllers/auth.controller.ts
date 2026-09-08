@@ -78,7 +78,7 @@ export class AuthController {
           throw new AppError({ code: 'EMAIL_PROVIDER_DISABLED', statusCode: 503, publicMessage: 'O login por e-mail esta desativado no provedor de autenticacao.' });
         }
 
-        console.log('Signup rejeitado pelo Auth', { event: 'auth.signup.auth_rejected', requestId: request.id, durationMs: Date.now() - startedAt, providerError: error.providerCode ?? 'unknown' });
+        console.log('Signup rejeitado pelo Auth', { event: 'auth.signup.auth_rejected', requestId: request.id, durationMs: Date.now() - startedAt, providerError: 'AUTH_REPOSITORY_ERROR' });
         throw new AppError({ code: 'SIGNUP_UNAVAILABLE', statusCode: 409, publicMessage: 'Nao foi possivel criar a conta.', cause: error });
       }
 

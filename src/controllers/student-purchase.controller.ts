@@ -6,6 +6,13 @@ import type { StudentPurchaseService } from '../services/student-purchase.servic
 type PurchaseParams = { purchaseId: string };
 type PurchaseHeaders = { 'idempotency-key'?: string | string[]; 'x-simulated-session'?: string | string[] };
 type PurchaseRequest<B = unknown, P = PurchaseParams> = FastifyRequest<{ Body: B; Params: P; Headers: PurchaseHeaders }>;
+type StudentPurchaseServicePort = {
+  createPurchase(userId: string, input: CreatePurchaseInput, key: string): Promise<unknown>;
+  simulatedCheckout(userId: string, purchaseId: string): Promise<unknown>;
+  simulatedConfirmation(userId: string, purchaseId: string, sessionId: string): Promise<unknown>;
+  listPurchases(userId: string): Promise<unknown>;
+  listSubscriptions(userId: string): Promise<unknown>;
+};
 
 const errorStatuses: Record<string, number> = {
   STUDENT_NOT_FOUND: 404,
@@ -32,7 +39,7 @@ function headerValue(value: string | string[] | undefined) {
 }
 
 export class StudentPurchaseController {
-  constructor(private readonly service: Pick<StudentPurchaseService, 'createPurchase' | 'simulatedCheckout' | 'simulatedConfirmation' | 'listPurchases' | 'listSubscriptions'>) {}
+  constructor(private readonly service: StudentPurchaseServicePort) {}
 
   private domainError(error: unknown) {
     const code = error instanceof Error ? error.message : 'INTERNAL_SERVER_ERROR';

@@ -20,4 +20,3 @@ export const flashcardReviewSchema = z.object({
 
 export type QuestionReviewInput = z.infer<typeof questionReviewSchema>;
 export type FlashcardReviewInput = z.infer<typeof flashcardReviewSchema>;
-

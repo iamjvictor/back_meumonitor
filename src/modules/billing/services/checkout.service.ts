@@ -1,11 +1,14 @@
 import crypto from 'node:crypto';
 import type { CreatePurchaseInput } from '../models/checkout.model.js';
 import type { PaymentProvider, BillingInterval } from '../providers/payment-provider.port.js';
-import { StudentPurchaseService } from '../../../services/student-purchase.service.js';
+import { StudentPurchaseService, type PurchaseResult } from '../../../services/student-purchase.service.js';
 import type { SimulatedConfirmationService } from './simulated-confirmation.service.js';
+import type { StudentPurchaseRepository, StudentPurchaseCreateData } from '../../../repositories/student-purchase.repository.js';
+import { AppError } from '../../../core/errors/app-error.js';
 
 type Config = { simulationEnabled: boolean; testPriceCents: number };
 type CustomerRepo = { findStudentByUserId(userId: string): Promise<{ id: string; email: string } | null>; upsert(data: { studentId: string; provider: string; providerCustomerId: string }): Promise<unknown> };
+type CheckoutRepository = Omit<ConstructorParameters<typeof StudentPurchaseService>[0], 'createPurchase'> & { createPurchase(data: StudentPurchaseCreateData): Promise<PurchaseResult> };
 
 function log(event: string, data: Record<string, unknown> = {}) { console.log(event, { event, ...data }); }
 
@@ -15,7 +18,7 @@ export class CheckoutService {
   private readonly customerRepo?: CustomerRepo;
   private readonly provider?: PaymentProvider;
   private readonly config: Config;
-  constructor(private readonly repo: any, customerRepoOrConfig: CustomerRepo | Config, provider?: PaymentProvider, config?: Config, private readonly simulatedConfirmationService?: SimulatedConfirmationService) {
+  constructor(private readonly repo: CheckoutRepository, customerRepoOrConfig: CustomerRepo | Config, provider?: PaymentProvider, config?: Config, private readonly simulatedConfirmationService?: SimulatedConfirmationService) {
     if (provider && config) { this.customerRepo = customerRepoOrConfig as CustomerRepo; this.provider = provider; this.config = config; }
     else this.config = customerRepoOrConfig as Config;
     this.legacy = new StudentPurchaseService(repo, this.config);
@@ -24,14 +27,14 @@ export class CheckoutService {
   async createCheckout(userId: string, input: CreatePurchaseInput & { interval?: BillingInterval }, idempotencyKey: string) {
     log('monitor.billing_checkout_requested', { userId, monitorCount: input.monitorIds.length, hasIdempotencyKey: Boolean(idempotencyKey?.trim()) });
     log('monitor.billing_checkout_started', { userId, monitorCount: input.monitorIds.length, interval: input.interval ?? 'MONTH', hasIdempotencyKey: Boolean(idempotencyKey?.trim()) });
-    if (!idempotencyKey?.trim()) throw new Error('IDEMPOTENCY_KEY_REQUIRED');
-    if (new Set(input.monitorIds).size !== input.monitorIds.length) throw new Error('DUPLICATE_MONITOR');
-    if (!this.customerRepo || !this.provider) throw new Error('BILLING_MODULE_NOT_CONFIGURED');
+    if (!idempotencyKey?.trim()) throw new AppError({ code: 'IDEMPOTENCY_KEY_REQUIRED', statusCode: 400, publicMessage: 'A chave de idempotência é obrigatória.' });
+    if (new Set(input.monitorIds).size !== input.monitorIds.length) throw new AppError({ code: 'DUPLICATE_MONITOR', statusCode: 400, publicMessage: 'Não é possível repetir um monitor na compra.' });
+    if (!this.customerRepo || !this.provider) throw new AppError({ code: 'BILLING_MODULE_NOT_CONFIGURED', statusCode: 500, publicMessage: 'O pagamento não está disponível.' });
     const student = await this.customerRepo.findStudentByUserId(userId);
-    if (!student) throw new Error('STUDENT_NOT_FOUND');
+    if (!student) throw new AppError({ code: 'STUDENT_NOT_FOUND', statusCode: 404, publicMessage: 'Aluno não encontrado.' });
     const existing = await this.repo.findPurchaseByIdempotencyKey(idempotencyKey);
     if (existing) {
-      if (existing.studentId !== student.id) throw new Error('IDEMPOTENCY_KEY_REUSED');
+      if (existing.studentId !== student.id) throw new AppError({ code: 'IDEMPOTENCY_KEY_REUSED', statusCode: 409, publicMessage: 'A chave de idempotência já foi utilizada.' });
       if (existing.gatewayCheckoutId) {
         const checkoutId = existing.gatewayCheckoutId.replace(/^simulated:/, '');
         const expiresAt = new Date(Date.now() + 600000);
@@ -40,12 +43,12 @@ export class CheckoutService {
         log('monitor.billing_checkout_idempotency_replayed', { userId, studentId: student.id, purchaseId: existing.id, checkoutId, status: existing.status, newSessionCreated: true });
         return this.result(existing, checkoutId, '/checkout/simulado', expiresAt, sessionId);
       }
-      throw new Error('CHECKOUT_REFERENCE_MISSING');
+      throw new AppError({ code: 'CHECKOUT_REFERENCE_MISSING', statusCode: 409, publicMessage: 'A compra não possui referência de checkout.' });
     }
     const monitors = await this.repo.findPublishedMonitors(input.monitorIds);
-    if (monitors.length !== input.monitorIds.length) throw new Error('MONITOR_NOT_PUBLISHED');
+    if (monitors.length !== input.monitorIds.length) throw new AppError({ code: 'MONITOR_NOT_PUBLISHED', statusCode: 404, publicMessage: 'Um ou mais monitores não estão disponíveis.' });
     const active = await this.repo.findActiveSubscriptions(student.id, input.monitorIds);
-    if (active.length) throw new Error('ACTIVE_SUBSCRIPTION');
+    if (active.length) throw new AppError({ code: 'ACTIVE_SUBSCRIPTION', statusCode: 409, publicMessage: 'Já existe uma assinatura ativa para este monitor.' });
     log('monitor.billing_checkout_validated', { userId, studentId: student.id, monitorCount: monitors.length, interval: input.interval ?? 'MONTH' });
     const unitAmount = this.config.testPriceCents;
     const amount = monitors.length * unitAmount;
@@ -53,7 +56,7 @@ export class CheckoutService {
     log('monitor.billing_purchase_creation_started', { userId, studentId: student.id, status: 'PENDING', itemCount: monitors.length, totalAmount: amount });
     let purchase;
     try {
-      purchase = await this.repo.createPurchase({ studentId: student.id, status: 'PENDING', paymentMethod: input.paymentMethod, currency: 'BRL', subtotalAmount: amount, discountAmount: 0, totalAmount: amount, idempotencyKey, items: { create: monitors.map((m: any) => ({ monitorId: m.id, descriptionSnapshot: m.name, unitAmount, quantity: 1 })) } });
+      purchase = await this.repo.createPurchase({ studentId: student.id, status: 'PENDING', paymentMethod: input.paymentMethod, currency: 'BRL', subtotalAmount: amount, discountAmount: 0, totalAmount: amount, idempotencyKey, items: { create: monitors.map((m) => ({ monitorId: m.id, descriptionSnapshot: m.name, unitAmount, quantity: 1 })) } });
     } catch (error) {
       log('monitor.billing_purchase_creation_failed', { userId, studentId: student.id, status: 'PENDING', stage: 'database', errorCode: error instanceof Error ? error.message : 'UNKNOWN_ERROR' });
       throw error;
@@ -86,11 +89,11 @@ export class CheckoutService {
       throw error;
     }
     log('monitor.billing_checkout_completed', { userId, studentId: student.id, purchaseId: purchase.id, checkoutId: checkout.checkoutId, amount, currency: 'BRL', status: 'PENDING' });
-    return { purchaseId: purchase.id, status: purchase.status, checkoutUrl: checkout.checkoutUrl, checkoutId: checkout.checkoutId, amount, currency: 'BRL', expiresAt: checkout.expiresAt, sessionId };
+    return { id: purchase.id, studentId: student.id, totalAmount: amount, items: monitors.map((monitor) => ({ monitorId: monitor.id, unitAmount })), purchaseId: purchase.id, status: purchase.status, checkoutUrl: checkout.checkoutUrl, checkoutId: checkout.checkoutId, amount, currency: 'BRL', expiresAt: checkout.expiresAt, sessionId };
   }
 
-  private result(purchase: any, checkoutId: string, checkoutUrl: string, expiresAt: Date, sessionId?: string) { return { purchaseId: purchase.id, status: purchase.status, checkoutUrl, checkoutId, amount: purchase.totalAmount, currency: purchase.currency, expiresAt, ...(sessionId ? { sessionId } : {}) }; }
-  createPurchase(userId: string, input: CreatePurchaseInput, key: string): Promise<any> {
+  private result(purchase: { id: string; studentId: string; status: string; totalAmount: number; currency: string; items?: Array<{ monitorId: string; unitAmount: number }> }, checkoutId: string, checkoutUrl: string, expiresAt: Date, sessionId?: string) { return { id: purchase.id, studentId: purchase.studentId, totalAmount: purchase.totalAmount, items: purchase.items ?? [], purchaseId: purchase.id, status: purchase.status, checkoutUrl, checkoutId, amount: purchase.totalAmount, currency: purchase.currency, expiresAt, ...(sessionId ? { sessionId } : {}) }; }
+  createPurchase(userId: string, input: CreatePurchaseInput, key: string): Promise<PurchaseResult> {
     if (!this.provider) return this.legacy.createPurchase(userId, input, key);
     return this.createCheckout(userId, input, key);
   }

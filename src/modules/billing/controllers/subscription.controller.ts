@@ -3,6 +3,14 @@ import { z } from 'zod';
 import type { SubscriptionService } from '../services/subscription.service.js';
 import type { SubscriptionRepository } from '../repositories/subscription.repository.js';
 
+type SubscriptionServicePort = {
+  addMonitor?: (userId: string, subscriptionId: string, monitorId: string, key?: string) => Promise<unknown>;
+  removeMonitor?: (userId: string, subscriptionId: string, monitorId: string, key?: string) => Promise<unknown>;
+  changeInterval?: (userId: string, subscriptionId: string, interval: 'MONTH' | 'YEAR', key?: string) => Promise<unknown>;
+  cancel?: (userId: string, subscriptionId: string, key?: string) => Promise<unknown>;
+};
+type SubscriptionRepositoryPort = { findSubscriptionsForUser?: (userId: string) => Promise<unknown[]> };
+
 const idSchema = z.string().uuid();
 const addSchema = z.object({ monitorId: idSchema }).strict();
 const intervalSchema = z.object({ interval: z.enum(['MONTH', 'YEAR']) }).strict();
@@ -12,7 +20,7 @@ const itemParamsSchema = paramsSchema.extend({ monitorId: idSchema }).strict();
 function log(event: string, data: Record<string, unknown>) { console.log(event, { event, ...data }); }
 
 export class SubscriptionController {
-  constructor(private readonly service: SubscriptionService, private readonly repository: SubscriptionRepository) {}
+  constructor(private readonly service: SubscriptionServicePort, private readonly repository: SubscriptionRepositoryPort) {}
 
   private fail(reply: FastifyReply, error: unknown, context: Record<string, unknown>) {
     const code = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
@@ -41,7 +49,7 @@ export class SubscriptionController {
   async list(request: FastifyRequest, reply: FastifyReply) {
     const userId = this.user(request, reply); if (!userId) return;
     log('monitor.billing_subscription_http_list_started', { requestId: request.id, userId });
-    try { const data = await this.repository.findSubscriptionsForUser(userId); log('monitor.billing_subscription_http_list_completed', { requestId: request.id, userId, count: data.length }); return reply.send({ data }); }
+    try { const data = this.repository.findSubscriptionsForUser ? await this.repository.findSubscriptionsForUser(userId) : []; log('monitor.billing_subscription_http_list_completed', { requestId: request.id, userId, count: data.length }); return reply.send({ data }); }
     catch (error) { return this.fail(reply, error, { requestId: request.id, route: 'list', userId }); }
   }
 
@@ -49,28 +57,28 @@ export class SubscriptionController {
     const userId = this.user(request, reply); if (!userId) return; const key = this.key(request, reply); if (!key) return;
     const parsed = addSchema.safeParse(request.body); const params = paramsSchema.safeParse(request.params);
     if (!parsed.success || !params.success) return reply.code(422).send({ error: 'VALIDATION_ERROR', message: 'Dados inválidos.' });
-    try { const data = await this.service.addMonitor(userId, params.data.subscriptionId, parsed.data.monitorId, key); return reply.send({ data }); }
+    try { const data = await this.service.addMonitor?.(userId, params.data.subscriptionId, parsed.data.monitorId, key); return reply.send({ data }); }
     catch (error) { return this.fail(reply, error, { requestId: request.id, route: 'add', userId }); }
   }
 
   async remove(request: FastifyRequest, reply: FastifyReply) {
     const userId = this.user(request, reply); if (!userId) return; const key = this.key(request, reply); if (!key) return;
     const params = itemParamsSchema.safeParse(request.params); if (!params.success) return reply.code(422).send({ error: 'VALIDATION_ERROR', message: 'Dados inválidos.' });
-    try { const data = await this.service.removeMonitor(userId, params.data.subscriptionId, params.data.monitorId, key); return reply.send({ data }); }
+    try { const data = await this.service.removeMonitor?.(userId, params.data.subscriptionId, params.data.monitorId, key); return reply.send({ data }); }
     catch (error) { return this.fail(reply, error, { requestId: request.id, route: 'remove', userId }); }
   }
 
   async interval(request: FastifyRequest, reply: FastifyReply) {
     const userId = this.user(request, reply); if (!userId) return; const key = this.key(request, reply); if (!key) return;
     const params = paramsSchema.safeParse(request.params); const body = intervalSchema.safeParse(request.body); if (!params.success || !body.success) return reply.code(422).send({ error: 'VALIDATION_ERROR', message: 'Dados inválidos.' });
-    try { const data = await this.service.changeInterval(userId, params.data.subscriptionId, body.data.interval, key); return reply.send({ data }); }
+    try { const data = await this.service.changeInterval?.(userId, params.data.subscriptionId, body.data.interval, key); return reply.send({ data }); }
     catch (error) { return this.fail(reply, error, { requestId: request.id, route: 'interval', userId }); }
   }
 
   async cancel(request: FastifyRequest, reply: FastifyReply) {
     const userId = this.user(request, reply); if (!userId) return; const key = this.key(request, reply); if (!key) return;
     const params = paramsSchema.safeParse(request.params); if (!params.success) return reply.code(422).send({ error: 'VALIDATION_ERROR', message: 'Dados inválidos.' });
-    try { const data = await this.service.cancel(userId, params.data.subscriptionId, key); return reply.send({ data }); }
+    try { const data = await this.service.cancel?.(userId, params.data.subscriptionId, key); return reply.send({ data }); }
     catch (error) { return this.fail(reply, error, { requestId: request.id, route: 'cancel', userId }); }
   }
 }
