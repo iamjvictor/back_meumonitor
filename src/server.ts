@@ -24,6 +24,8 @@ import { createStudentProfileModule } from './modules/student-profile/student-pr
 import { studentProfileRoutes } from './modules/student-profile/student-profile.routes.js';
 import { createStudentAccessModule } from './modules/student-access/student-access.module.js';
 import { studentAccessRoutes } from './modules/student-access/student-access.routes.js';
+import { createStudentFlashcardsModule } from './modules/student-flashcards/student-flashcards.module.js';
+import { studentFlashcardsRoutes } from './modules/student-flashcards/student-flashcards.routes.js';
 
 // Railway terminates HTTPS at the public edge; the Node process listens on HTTP internally.
 const app = Fastify({
@@ -76,6 +78,8 @@ const studentProfileModule = createStudentProfileModule();
 await app.register(async (profileApp) => studentProfileRoutes(profileApp, studentProfileModule.controller), { prefix: '/api/v1' });
 const studentAccessModule = createStudentAccessModule();
 await app.register(async (accessApp) => studentAccessRoutes(accessApp, studentAccessModule.controller), { prefix: '/api/v1' });
+const studentFlashcardsModule = createStudentFlashcardsModule({ access: studentAccessModule.service });
+await app.register(async (flashcardsApp) => studentFlashcardsRoutes(flashcardsApp, studentFlashcardsModule.controller), { prefix: '/api/v1' });
 await app.register(teacherRoutes, { prefix: '/api/v1/teachers' });
 await app.register(profileImageRoutes, { prefix: '/api/v1/teachers' });
 await app.register(profileImageRoutes, { prefix: '/api/v1/student' });
