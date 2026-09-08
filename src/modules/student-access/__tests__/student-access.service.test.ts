@@ -42,8 +42,8 @@ test('nega acesso quando não há assinatura, matrícula ou propriedade', async 
 test('cancela assinatura e matrícula ativas do aluno', async () => {
   const calls: string[] = [];
   const service = createStudentAccessService(repository({
-    cancelSubscription: async (studentId, monitorId) => calls.push(`subscription:${studentId}:${monitorId}`),
-    cancelEnrollment: async (studentId, monitorId) => calls.push(`enrollment:${studentId}:${monitorId}`),
+    cancelSubscription: async (studentId, monitorId) => { calls.push(`subscription:${studentId}:${monitorId}`); },
+    cancelEnrollment: async (studentId, monitorId) => { calls.push(`enrollment:${studentId}:${monitorId}`); },
   }));
 
   await service.cancelMonitorAccess({ userId: 'user-1', monitorId: 'monitor-1' });
