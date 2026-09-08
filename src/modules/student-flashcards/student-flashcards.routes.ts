@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { authMiddleware } from '../../middleware/auth.middleware.js';
 import { FlashcardNotFoundError } from './student-flashcards.service.js';
 import type { StudentFlashcardsController } from './student-flashcards.controller.js';
+import { AppError } from '../../core/errors/app-error.js';
 
 const paramsSchema = z.object({ flashcardId: z.string().min(1) });
 const randomQuerySchema = z.object({ monitorId: z.string().min(1).optional(), excludeFlashcardId: z.string().min(1).optional() });
@@ -10,9 +11,9 @@ const bodySchema = z.object({ rating: z.enum(['AGAIN', 'HARD', 'GOOD', 'EASY']) 
 
 export async function studentFlashcardsRoutes(app: FastifyInstance, controller: StudentFlashcardsController) {
   app.get('/student/flashcards/random', { onRequest: authMiddleware }, async (request, reply) => {
-    if (!request.user) return reply.code(401).send({ error: 'UNAUTHENTICATED' });
+    if (!request.user) throw new AppError({ code: 'UNAUTHENTICATED', statusCode: 401, publicMessage: 'Sessao de usuario obrigatoria.' });
     const query = randomQuerySchema.safeParse(request.query ?? {});
-    if (!query.success) return reply.code(400).send({ error: 'VALIDATION_ERROR' });
+    if (!query.success) throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 422, publicMessage: 'Dados inválidos.', internalDetails: query.error.flatten() });
 
     try {
       const card = await controller.getRandomFlashcard({ userId: request.user.id, ...query.data });
@@ -31,23 +32,20 @@ export async function studentFlashcardsRoutes(app: FastifyInstance, controller: 
         cardStatus: card.cardStatus,
       } });
     } catch (error) {
-      if (error instanceof Error && error.message === 'NO_ACCESSIBLE_MONITORS') return reply.code(404).send({ error: 'NO_ACCESSIBLE_MONITORS', message: 'Você não possui nenhum monitor de estudos comprado ou cadastrado.' });
-      if (error instanceof Error && error.message === 'MONITOR_NOT_ACCESSIBLE') return reply.code(403).send({ error: 'MONITOR_NOT_ACCESSIBLE', message: 'Você não possui acesso a este monitor de estudos.' });
-      if (error instanceof Error && error.message === 'NO_FLASHCARDS_FOUND') return reply.code(404).send({ error: 'NO_FLASHCARDS_FOUND', message: 'Nenhum flashcard disponível para este monitor no momento.' });
+      if (error instanceof Error && error.message === 'NO_ACCESSIBLE_MONITORS') throw new AppError({ code: 'NO_ACCESSIBLE_MONITORS', statusCode: 404, publicMessage: 'Você não possui nenhum monitor de estudos comprado ou cadastrado.' });
+      if (error instanceof Error && error.message === 'MONITOR_NOT_ACCESSIBLE') throw new AppError({ code: 'MONITOR_NOT_ACCESSIBLE', statusCode: 403, publicMessage: 'Você não possui acesso a este monitor de estudos.' });
+      if (error instanceof Error && error.message === 'NO_FLASHCARDS_FOUND') throw new AppError({ code: 'NO_FLASHCARDS_FOUND', statusCode: 404, publicMessage: 'Nenhum flashcard disponível para este monitor no momento.' });
       throw error;
     }
   });
 
   app.post('/student/flashcards/:flashcardId/review', { onRequest: authMiddleware }, async (request, reply) => {
-    if (!request.user) return reply.code(401).send({ error: 'UNAUTHENTICATED' });
+    if (!request.user) throw new AppError({ code: 'UNAUTHENTICATED', statusCode: 401, publicMessage: 'Sessao de usuario obrigatoria.' });
 
     const params = paramsSchema.safeParse(request.params);
     const body = bodySchema.safeParse(request.body ?? {});
     if (!params.success || !body.success) {
-      return reply.code(400).send({
-        error: 'INVALID_RATING',
-        message: 'Rating inválido. Escolha entre AGAIN, HARD, GOOD ou EASY.',
-      });
+      throw new AppError({ code: 'INVALID_RATING', statusCode: 400, publicMessage: 'Rating inválido. Escolha entre AGAIN, HARD, GOOD ou EASY.' });
     }
 
     try {
@@ -59,7 +57,7 @@ export async function studentFlashcardsRoutes(app: FastifyInstance, controller: 
       return reply.send({ success: true, data });
     } catch (error) {
       if (error instanceof FlashcardNotFoundError) {
-        return reply.code(404).send({ error: 'FLASHCARD_NOT_FOUND', message: 'Flashcard não encontrado.' });
+        throw new AppError({ code: 'FLASHCARD_NOT_FOUND', statusCode: 404, publicMessage: 'Flashcard não encontrado.' });
       }
       throw error;
     }

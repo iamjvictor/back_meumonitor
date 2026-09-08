@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { authMiddleware } from '../../middleware/auth.middleware.js';
 import type { StudentProfileController } from './student-profile.controller.js';
+import { AppError } from '../../core/errors/app-error.js';
 
 const profileBody = z.object({
   fullName: z.string().optional(),
@@ -15,15 +16,11 @@ export async function studentProfileRoutes(
   controller: StudentProfileController,
 ) {
   app.put('/student/profile', { onRequest: authMiddleware }, async (request, reply) => {
-    if (!request.user) return reply.code(401).send({ error: 'UNAUTHENTICATED' });
+    if (!request.user) throw new AppError({ code: 'UNAUTHENTICATED', statusCode: 401, publicMessage: 'Sessao de usuario obrigatoria.' });
 
     const body = profileBody.safeParse(request.body ?? {});
     if (!body.success) {
-      return reply.code(400).send({
-        error: 'VALIDATION_ERROR',
-        message: 'Dados de perfil inválidos.',
-        details: body.error.flatten(),
-      });
+      throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 422, publicMessage: 'Dados de perfil inválidos.', internalDetails: body.error.flatten() });
     }
 
     const data = await controller.updateProfile(request.user, body.data);

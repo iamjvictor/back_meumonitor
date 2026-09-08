@@ -1,5 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { supabaseAuth } from '../lib/supabase.js';
+import { AppError } from '../core/errors/app-error.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -51,7 +52,7 @@ export async function authMiddleware(request: FastifyRequest, reply: FastifyRepl
 
   if (!accessToken) {
     console.log('Sessao nao enviada', { event: 'auth.session_missing', requestId: request.id, url: request.url });
-    return reply.code(401).send({ error: 'UNAUTHENTICATED', message: 'Sessao de usuario obrigatoria.' });
+    throw new AppError({ code: 'UNAUTHENTICATED', statusCode: 401, publicMessage: 'Sessao de usuario obrigatoria.' });
   }
 
   // Fast path: check in-memory cache
@@ -77,7 +78,7 @@ export async function authMiddleware(request: FastifyRequest, reply: FastifyRepl
   if (error || !data.user) {
     sessionCache.delete(accessToken);
     console.log('Sessao invalida ou expirada', { event: 'auth.session_invalid', requestId: request.id, providerMessage: error?.message });
-    return reply.code(401).send({ error: 'UNAUTHENTICATED', message: 'Sessao invalida ou expirada.' });
+    throw new AppError({ code: 'UNAUTHENTICATED', statusCode: 401, publicMessage: 'Sessao invalida ou expirada.' });
   }
 
   const userObj = {
