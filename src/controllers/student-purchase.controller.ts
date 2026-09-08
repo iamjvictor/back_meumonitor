@@ -1,17 +1,92 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { createPurchaseSchema } from '../models/student-purchase.model.js';
+import { AppError } from '../core/errors/app-error.js';
+import { createPurchaseSchema, type CreatePurchaseInput } from '../models/student-purchase.model.js';
 import type { StudentPurchaseService } from '../services/student-purchase.service.js';
+
+type PurchaseParams = { purchaseId: string };
+type PurchaseHeaders = { 'idempotency-key'?: string | string[]; 'x-simulated-session'?: string | string[] };
+type PurchaseRequest<B = unknown, P = PurchaseParams> = FastifyRequest<{ Body: B; Params: P; Headers: PurchaseHeaders }>;
+
+const errorStatuses: Record<string, number> = {
+  STUDENT_NOT_FOUND: 404,
+  PURCHASE_NOT_FOUND: 404,
+  MONITOR_NOT_PUBLISHED: 422,
+  DUPLICATE_MONITOR: 422,
+  ACTIVE_SUBSCRIPTION: 409,
+  IDEMPOTENCY_KEY_REQUIRED: 422,
+  IDEMPOTENCY_KEY_REUSED: 409,
+  SIMULATION_DISABLED: 503,
+  INVALID_CHECKOUT_SESSION: 422,
+  SESSION_EXPIRED: 422,
+  CHECKOUT_AMOUNT_MISMATCH: 409,
+  PURCHASE_NOT_PENDING: 409,
+  PURCHASE_NOT_CONFIRMABLE: 409,
+};
 
 function log(event: string, data: Record<string, unknown> = {}) {
   console.log(event, { event, ...data });
 }
 
+function headerValue(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 export class StudentPurchaseController {
   constructor(private readonly service: StudentPurchaseService) {}
-  private error(reply: FastifyReply, e: unknown, context: Record<string, unknown> = {}) { const code = e instanceof Error ? e.message : ''; const map: Record<string, number> = { STUDENT_NOT_FOUND: 404, PURCHASE_NOT_FOUND: 404, MONITOR_NOT_PUBLISHED: 422, DUPLICATE_MONITOR: 422, ACTIVE_SUBSCRIPTION: 409, IDEMPOTENCY_KEY_REQUIRED: 422, IDEMPOTENCY_KEY_REUSED: 409, SIMULATION_DISABLED: 503, INVALID_CHECKOUT_SESSION: 422, SESSION_EXPIRED: 422, CHECKOUT_AMOUNT_MISMATCH: 409, PURCHASE_NOT_PENDING: 409, PURCHASE_NOT_CONFIRMABLE: 409 }; log('monitor.student_purchase_http_failed', { ...context, errorCode: code || 'UNKNOWN_ERROR', statusCode: map[code] ?? 500 }); return reply.code(map[code] ?? 500).send({ error: map[code] ? code : 'INTERNAL_SERVER_ERROR', message: 'Não foi possível processar a solicitação.' }); }
-  async create(req: any, reply: FastifyReply) { log('monitor.student_purchase_http_create_started', { requestId: req.id, userId: req.user?.id, monitorCount: req.body?.monitorIds?.length, hasIdempotencyKey: Boolean(req.headers['idempotency-key']) }); if (!req.user) return reply.code(401).send({ error: 'UNAUTHENTICATED' }); const parsed = createPurchaseSchema.safeParse(req.body); if (!parsed.success) { log('monitor.student_purchase_http_validation_failed', { requestId: req.id, route: 'create' }); return reply.code(422).send({ error: 'VALIDATION_ERROR', details: parsed.error.flatten() }); } try { const data = await this.service.createPurchase(req.user.id, parsed.data, req.headers['idempotency-key'] as string); log('monitor.student_purchase_http_create_completed', { requestId: req.id, purchaseId: data.purchaseId, status: data.status, checkoutUrlCreated: Boolean(data.checkoutUrl) }); return reply.code(201).send({ data }); } catch (e) { return this.error(reply, e, { requestId: req.id, route: 'create' }); } }
-  async checkout(req: any, reply: FastifyReply) { log('monitor.student_purchase_http_simulated_checkout_started', { requestId: req.id, userId: req.user?.id, purchaseId: req.params.purchaseId }); if (!req.user) return reply.code(401).send({ error: 'UNAUTHENTICATED' }); try { const data = await this.service.simulatedCheckout(req.user.id, req.params.purchaseId); log('monitor.student_purchase_http_simulated_checkout_completed', { requestId: req.id, purchaseId: req.params.purchaseId, expiresAt: data.expiresAt }); return reply.send({ data }); } catch (e) { return this.error(reply, e, { requestId: req.id, route: 'simulated-checkout', purchaseId: req.params.purchaseId }); } }
-  async confirm(req: any, reply: FastifyReply) { log('monitor.student_purchase_http_simulated_webhook_started', { requestId: req.id, userId: req.user?.id, purchaseId: req.params.purchaseId, headerSessionProvided: Boolean(req.headers['x-simulated-session']) }); if (!req.user) return reply.code(401).send({ error: 'UNAUTHENTICATED' }); const sessionId = req.headers['x-simulated-session'] as string || req.body?.sessionId; if (!sessionId) { log('monitor.student_purchase_http_simulated_webhook_rejected', { requestId: req.id, purchaseId: req.params.purchaseId, reason: 'SESSION_REQUIRED' }); return reply.code(422).send({ error: 'SESSION_REQUIRED' }); } try { const data = await this.service.simulatedConfirmation(req.user.id, req.params.purchaseId, sessionId); log('monitor.student_purchase_http_simulated_webhook_completed', { requestId: req.id, purchaseId: req.params.purchaseId, status: data.status }); return reply.send({ data }); } catch (e) { return this.error(reply, e, { requestId: req.id, route: 'simulated-confirmation', purchaseId: req.params.purchaseId }); } }
-  async purchases(req: any, reply: FastifyReply) { if (!req.user) return reply.code(401).send({ error: 'UNAUTHENTICATED' }); try { return reply.send({ data: await this.service.listPurchases(req.user.id) }); } catch (e) { return this.error(reply, e); } }
-  async subscriptions(req: any, reply: FastifyReply) { if (!req.user) return reply.code(401).send({ error: 'UNAUTHENTICATED' }); try { return reply.send({ data: await this.service.listSubscriptions(req.user.id) }); } catch (e) { return this.error(reply, e); } }
+
+  private domainError(error: unknown) {
+    const code = error instanceof Error ? error.message : 'INTERNAL_SERVER_ERROR';
+    return new AppError({
+      code: errorStatuses[code] ? code : 'INTERNAL_SERVER_ERROR',
+      statusCode: errorStatuses[code] ?? 500,
+      publicMessage: errorStatuses[code] ? 'Não foi possível processar a solicitação.' : 'Erro interno do servidor.',
+      internalDetails: { originalCode: code },
+      cause: error,
+    });
+  }
+
+  private requireUser(request: FastifyRequest) {
+    if (!request.user) throw new AppError({ code: 'UNAUTHENTICATED', statusCode: 401, publicMessage: 'Sessão de usuário obrigatória.' });
+    return request.user.id;
+  }
+
+  async create(request: PurchaseRequest<CreatePurchaseInput>, reply: FastifyReply) {
+    const userId = this.requireUser(request);
+    const parsed = createPurchaseSchema.safeParse(request.body);
+    if (!parsed.success) throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 422, publicMessage: 'Dados de compra inválidos.', internalDetails: parsed.error.flatten() });
+    const key = headerValue(request.headers['idempotency-key']);
+    log('monitor.student_purchase_http_create_started', { requestId: request.id, userId, monitorCount: parsed.data.monitorIds.length, hasIdempotencyKey: Boolean(key) });
+    try {
+      const data = await this.service.createPurchase(userId, parsed.data, key ?? '');
+      log('monitor.student_purchase_http_create_completed', { requestId: request.id, purchaseId: data.purchaseId, status: data.status, checkoutUrlCreated: Boolean(data.checkoutUrl) });
+      return reply.code(201).send({ data });
+    } catch (error) { throw this.domainError(error); }
+  }
+
+  async checkout(request: PurchaseRequest<unknown>, reply: FastifyReply) {
+    const userId = this.requireUser(request);
+    try { return reply.send({ data: await this.service.simulatedCheckout(userId, request.params.purchaseId) }); }
+    catch (error) { throw this.domainError(error); }
+  }
+
+  async confirm(request: PurchaseRequest<{ sessionId?: string }>, reply: FastifyReply) {
+    const userId = this.requireUser(request);
+    const headerSession = headerValue(request.headers['x-simulated-session']);
+    const sessionId = headerSession ?? request.body?.sessionId;
+    if (!sessionId) throw new AppError({ code: 'SESSION_REQUIRED', statusCode: 422, publicMessage: 'Sessão de checkout obrigatória.' });
+    try { return reply.send({ data: await this.service.simulatedConfirmation(userId, request.params.purchaseId, sessionId) }); }
+    catch (error) { throw this.domainError(error); }
+  }
+
+  async purchases(request: PurchaseRequest<unknown>, reply: FastifyReply) {
+    const userId = this.requireUser(request);
+    try { return reply.send({ data: await this.service.listPurchases(userId) }); }
+    catch (error) { throw this.domainError(error); }
+  }
+
+  async subscriptions(request: PurchaseRequest<unknown>, reply: FastifyReply) {
+    const userId = this.requireUser(request);
+    try { return reply.send({ data: await this.service.listSubscriptions(userId) }); }
+    catch (error) { throw this.domainError(error); }
+  }
 }

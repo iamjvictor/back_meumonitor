@@ -1,5 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import type { SubscriptionService } from '../services/subscription.service.js';
+import type { SubscriptionRepository } from '../repositories/subscription.repository.js';
 
 const idSchema = z.string().uuid();
 const addSchema = z.object({ monitorId: idSchema }).strict();
@@ -10,7 +12,7 @@ const itemParamsSchema = paramsSchema.extend({ monitorId: idSchema }).strict();
 function log(event: string, data: Record<string, unknown>) { console.log(event, { event, ...data }); }
 
 export class SubscriptionController {
-  constructor(private readonly service: any, private readonly repository: any) {}
+  constructor(private readonly service: SubscriptionService, private readonly repository: SubscriptionRepository) {}
 
   private fail(reply: FastifyReply, error: unknown, context: Record<string, unknown>) {
     const code = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
