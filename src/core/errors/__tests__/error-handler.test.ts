@@ -50,3 +50,18 @@ test('converte erro inesperado e ZodError para contratos seguros', () => {
   assert.deepEqual(validationReply.payload, { error: { code: 'VALIDATION_ERROR', message: 'Dados de entrada inválidos.', details: null } });
   assert.equal(JSON.stringify(logs).includes('database password secret'), false);
 });
+
+test('converte erro nativo de validação do Fastify sem expor detalhes', () => {
+  const logs: unknown[] = [];
+  const handler = createErrorHandler((entry) => logs.push(entry));
+  const reply = replySpy();
+  const error = Object.assign(new Error('body validation failed'), {
+    validation: [{ keyword: 'required', params: { missingProperty: 'email' } }],
+  });
+
+  handler(error, { id: 'request-4', method: 'POST', url: '/users' }, reply);
+
+  assert.equal(reply.statusCode, 422);
+  assert.deepEqual(reply.payload, { error: { code: 'VALIDATION_ERROR', message: 'Dados de entrada inválidos.', details: null } });
+  assert.equal(JSON.stringify(logs).includes('missingProperty'), false);
+});
