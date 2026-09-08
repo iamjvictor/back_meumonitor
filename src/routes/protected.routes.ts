@@ -251,31 +251,6 @@ export async function protectedRoutes(app: FastifyInstance) {
     });
   });
 
-  app.post('/student/monitors/:monitorId/cancel', async (request, reply) => {
-    if (!request.user) throw new Error('Authenticated user was not attached to request');
-
-    const { monitorId } = request.params as { monitorId: string };
-    const student = await studentRepo.findByUserId(request.user.id);
-    if (!student) return reply.status(404).send({ error: 'STUDENT_NOT_FOUND', message: 'Estudante não encontrado.' });
-
-    await prisma.studentSubscription.updateMany({
-      where: { studentId: student.id, monitorId, status: 'active' },
-      data: { status: 'cancelled', cancelledAt: new Date() },
-    });
-
-    await prisma.studentEnrollment.updateMany({
-      where: { studentId: student.id, monitorId, status: 'ACTIVE' },
-      data: { status: 'CANCELLED' },
-    });
-
-    console.log('[POST /student/monitors/:monitorId/cancel] Assinatura cancelada:', {
-      studentId: student.id,
-      monitorId,
-    });
-
-    return reply.send({ success: true, message: 'Assinatura cancelada com sucesso.' });
-  });
-
   app.post('/student/flashcards/:flashcardId/review', async (request, reply) => {
     if (!request.user) throw new Error('Authenticated user was not attached to request');
 
@@ -413,4 +388,3 @@ export async function protectedRoutes(app: FastifyInstance) {
     });
   });
 }
-
