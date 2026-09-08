@@ -26,6 +26,7 @@ import { createStudentAccessModule } from './modules/student-access/student-acce
 import { studentAccessRoutes } from './modules/student-access/student-access.routes.js';
 import { createStudentFlashcardsModule } from './modules/student-flashcards/student-flashcards.module.js';
 import { studentFlashcardsRoutes } from './modules/student-flashcards/student-flashcards.routes.js';
+import { createErrorHandler } from './core/errors/error-handler.js';
 
 // Railway terminates HTTPS at the public edge; the Node process listens on HTTP internally.
 const app = Fastify({
@@ -97,9 +98,6 @@ await app.register(chatRoutes, { prefix: '/api/v1' });
 await app.register(studentContentReportRoutes, { prefix: '/api/v1/student' });
 
 
-app.setErrorHandler((error, request, reply) => {
-  console.log('Erro nao tratado na requisicao', { error });
-  return reply.code(500).send({ error: 'INTERNAL_SERVER_ERROR', message: 'Erro interno do servidor.' });
-});
+app.setErrorHandler(createErrorHandler());
 
 await app.listen({ host: env.HOST, port: env.PORT });
