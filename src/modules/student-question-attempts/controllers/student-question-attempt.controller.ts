@@ -32,12 +32,12 @@ export class StudentQuestionAttemptController {
 
   async list(request: FastifyRequest, reply: FastifyReply) {
     if (!request.user) return reply.code(401).send({ error: 'UNAUTHENTICATED' });
-    const query = request.query as { monitorId?: string; topicId?: string; page?: string; pageSize?: string };
+    const query = request.query as { monitorId?: string; subjectId?: string; topicId?: string; page?: string; pageSize?: string };
     const page = Math.max(1, Number(query.page ?? 1) || 1);
     const pageSize = Math.min(100, Math.max(1, Number(query.pageSize ?? 20) || 20));
-    log('monitor.student_questions_http_list_started', { requestId: request.id, userId: request.user.id, monitorId: query.monitorId ?? null, topicId: query.topicId ?? null, page, pageSize });
+    log('monitor.student_questions_http_list_started', { requestId: request.id, userId: request.user.id, monitorId: query.monitorId ?? null, subjectId: query.subjectId ?? null, topicId: query.topicId ?? null, page, pageSize });
     try {
-      const result = await this.service.listQuestions(request.user.id, { monitorId: query.monitorId, topicId: query.topicId, page, pageSize });
+      const result = await this.service.listQuestions(request.user.id, { monitorId: query.monitorId, subjectId: query.subjectId, topicId: query.topicId, page, pageSize });
       log('monitor.student_questions_http_list_completed', { requestId: request.id, userId: request.user.id, count: result.questions.length, total: result.total, page, pageSize });
       return reply.send({ data: { ...result, page, pageSize } });
     } catch (error) {

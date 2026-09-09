@@ -6,7 +6,7 @@ function log(event: string, data: Record<string, unknown> = {}) { console.log(ev
 export class StudentQuestionAttemptService {
   constructor(private readonly repository = new StudentQuestionAttemptRepository()) {}
 
-  async listQuestions(userId: string, input: { monitorId?: string; topicId?: string; page: number; pageSize: number }) {
+  async listQuestions(userId: string, input: { monitorId?: string; subjectId?: string; topicId?: string; page: number; pageSize: number }) {
     const student = await this.repository.findStudentByUserId(userId);
     if (!student) throw new Error('STUDENT_NOT_FOUND');
     const monitorIds = await this.repository.findAccessibleMonitorIds(student.id, userId);
