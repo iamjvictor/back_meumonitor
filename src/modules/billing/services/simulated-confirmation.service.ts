@@ -1,12 +1,21 @@
 import crypto from 'node:crypto';
 import type { WebhookService } from './webhook.service.js';
 
+type PaymentSession = { id: string; purchaseId: string; studentId: string; expiresAt: Date; amount: number; currency: string };
+type ConfirmationRepository = {
+  findStudentByUserId(userId: string): Promise<{ id: string } | null>;
+  findPaymentSessionByTokenHash(hash: string): Promise<PaymentSession | null>;
+  findPurchaseForStudent(purchaseId: string, studentId: string): Promise<{ status: string; totalAmount: number; currency: string } | null>;
+  consumePaymentSession(id: string): Promise<{ consumed: boolean }>;
+};
+type ConfirmationResult = { status: string; purchaseId: string; idempotent: boolean; webhookStatus?: string; subscriptionId?: string; itemCount?: number; enrollmentCount?: number };
+
 function log(event: string, data: Record<string, unknown> = {}) { console.log(event, { event, ...data }); }
 
 export class SimulatedConfirmationService {
-  constructor(private readonly repository: any, private readonly webhook: Pick<WebhookService, 'process'>) {}
+  constructor(private readonly repository: ConfirmationRepository, private readonly webhook: Pick<WebhookService, 'process'>) {}
 
-  async confirm(userId: string, purchaseId: string, sessionId: string) {
+  async confirm(userId: string, purchaseId: string, sessionId: string): Promise<ConfirmationResult> {
     log('monitor.billing_simulated_confirmation_started', { userId, purchaseId, sessionProvided: Boolean(sessionId) });
     const student = await this.repository.findStudentByUserId(userId);
     if (!student) throw new Error('STUDENT_NOT_FOUND');

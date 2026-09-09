@@ -1,14 +1,13 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { answerChallengeSchema, rankingMonthSchema } from '../models/daily-challenge.model.js';
 import { DailyChallengeService } from '../services/daily-challenge.service.js';
-import { DailyChallengeRankingRepository } from '../repositories/daily-challenge-ranking.repository.js';
 
 function log(event: string, data: Record<string, unknown> = {}) { console.log(event, { event, ...data }); }
 
 const errors: Record<string, number> = { STUDENT_NOT_FOUND: 404, ENROLLMENT_REQUIRED: 403, CHALLENGE_NOT_FOUND: 404, CHALLENGE_EXPIRED: 422 };
 
 export class DailyChallengeController {
-  constructor(private readonly service = new DailyChallengeService(), private readonly rankingRepository = new DailyChallengeRankingRepository()) {}
+  constructor(private readonly service = new DailyChallengeService()) {}
 
   private fail(reply: FastifyReply, error: unknown, context: Record<string, unknown>) {
     const code = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
@@ -44,7 +43,7 @@ export class DailyChallengeController {
     const [year, numericMonth] = month.split('-').map(Number);
     if (!year || !numericMonth || numericMonth < 1 || numericMonth > 12) return reply.code(422).send({ error: 'VALIDATION_ERROR', message: 'month inválido.' });
     const end = new Date(Date.UTC(year, numericMonth, 1, 3, 0, 0, 0));
-    try { return reply.send({ data: await this.rankingRepository.get(request.params.monitorId, start, end) }); }
+    try { return reply.send({ data: await this.service.getRanking(request.user.id, request.params.monitorId, start, end) }); }
     catch (error) { return this.fail(reply, error, { route: 'ranking', requestId: request.id, monitorId: request.params.monitorId, month }); }
   }
 }

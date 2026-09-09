@@ -1,6 +1,11 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { z } from 'zod';
+import { AppError } from '../core/errors/app-error.js';
 import { createMonitorSchema, monitorIdParamsSchema, updateMonitorSchema } from '../models/monitor.model.js';
 import { MonitorService } from '../services/monitor.service.js';
+
+export const addSubjectBodySchema = z.object({ name: z.string().trim().min(1).max(120), topics: z.array(z.string().trim().min(1).max(120)).min(1).max(30) }).strict();
+export const addTopicBodySchema = z.object({ name: z.string().trim().min(1).max(120), definition: z.string().trim().max(4000).optional() }).strict();
 
 export class MonitorController {
   constructor(private readonly service: MonitorService) {}
@@ -55,7 +60,7 @@ export class MonitorController {
         requestId: request.id,
         userId: request.user.id,
         durationMs: Date.now() - startedAt,
-        error,
+        errorType: error instanceof Error ? error.name : 'UnknownError',
       });
       return reply.code(500).send({ error: 'MONITOR_CREATION_FAILED', message: 'Nao foi possivel criar o Monitor de IA.' });
     }
@@ -100,11 +105,11 @@ export class MonitorController {
       console.log('[MonitorController.listMine] Monitores encontrados:', {
         userId: request.user.id,
         count: monitors.length,
-        monitorIds: monitors.map((m: any) => m.id),
+        monitorIds: monitors.map((m) => m.id),
       });
       return reply.code(200).send({ data: monitors });
     } catch (error) {
-      console.log('[MonitorController.listMine] Erro ao listar Monitores:', { requestId: request.id, userId: request.user.id, error });
+      console.log('[MonitorController.listMine] Erro ao listar Monitores:', { requestId: request.id, userId: request.user.id, errorType: error instanceof Error ? error.name : 'UnknownError' });
       return reply.code(500).send({ error: 'MONITOR_LIST_FAILED', message: 'Nao foi possivel listar os Monitores de IA.' });
     }
   }
@@ -123,27 +128,23 @@ export class MonitorController {
 
       return reply.code(200).send({ data: monitor });
     } catch (error) {
-      console.log('Falha ao buscar Monitor de IA', { event: 'monitor.lookup_failed', requestId: request.id, userId: request.user.id, monitorId: params.data.monitorId, error });
+      console.log('Falha ao buscar Monitor de IA', { event: 'monitor.lookup_failed', requestId: request.id, userId: request.user.id, monitorId: params.data.monitorId, errorType: error instanceof Error ? error.name : 'UnknownError' });
       return reply.code(500).send({ error: 'MONITOR_LOOKUP_FAILED', message: 'Nao foi possivel carregar o Monitor de IA.' });
     }
   }
 
   async addSubject(request: FastifyRequest<{ Params: { monitorId: string }; Body: { name: string; topics?: string[] } }>, reply: FastifyReply) {
     if (!request.user) return reply.code(401).send({ error: 'UNAUTHENTICATED', message: 'Sessao de usuario obrigatoria.' });
-    const { name, topics } = (request.body as any) || {};
-    if (!name || !name.trim()) return reply.code(400).send({ error: 'VALIDATION_ERROR', message: 'Nome da materia e obrigatorio.' });
-
-    const topicsArray = Array.isArray(topics) ? topics : [];
-    if (topicsArray.filter((t: any) => typeof t === 'string' && t.trim()).length === 0) {
-      return reply.code(400).send({ error: 'VALIDATION_ERROR', message: 'É necessário fornecer pelo menos 1 tópico válido.' });
-    }
+    const parsed = addSubjectBodySchema.safeParse(request.body);
+    if (!parsed.success) throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 422, publicMessage: 'Dados da matéria inválidos.', internalDetails: parsed.error.flatten() });
+    const { name, topics } = parsed.data;
 
     try {
-      const monitor = await this.service.addSubject(request.user.id, request.params.monitorId, name, topicsArray);
+      const monitor = await this.service.addSubject(request.user.id, request.params.monitorId, name, topics);
       if (!monitor) return reply.code(404).send({ error: 'NOT_FOUND', message: 'Monitor nao encontrado.' });
       return reply.code(201).send({ data: monitor });
-    } catch (error) {
-      return reply.code(500).send({ error: 'ADD_SUBJECT_FAILED', message: 'Falha ao adicionar materia.' });
+    } catch (cause) {
+      throw new AppError({ code: 'ADD_SUBJECT_FAILED', statusCode: 500, publicMessage: 'Falha ao adicionar matéria.', cause });
     }
   }
 
@@ -161,11 +162,9 @@ export class MonitorController {
 
   async addTopic(request: FastifyRequest<{ Params: { monitorId: string; subjectId: string }; Body: { name: string; definition?: string } }>, reply: FastifyReply) {
     if (!request.user) return reply.code(401).send({ error: 'UNAUTHENTICATED', message: 'Sessao de usuario obrigatoria.' });
-    const { name, definition } = (request.body as any) || {};
-    if (!name || !name.trim()) return reply.code(400).send({ error: 'VALIDATION_ERROR', message: 'Nome do topico e obrigatorio.' });
-    if (definition !== undefined && (typeof definition !== 'string' || definition.trim().length > 4000)) {
-      return reply.code(400).send({ error: 'VALIDATION_ERROR', message: 'A definicao do topico deve ter no maximo 4000 caracteres.' });
-    }
+    const parsed = addTopicBodySchema.safeParse(request.body);
+    if (!parsed.success) throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 422, publicMessage: 'Dados do tópico inválidos.', internalDetails: parsed.error.flatten() });
+    const { name, definition } = parsed.data;
 
     try {
       const monitor = await this.service.addTopic(request.user.id, request.params.monitorId, request.params.subjectId, name, definition);
@@ -210,7 +209,7 @@ export class MonitorController {
 
       return reply.code(200).send({ data: monitor });
     } catch (error) {
-      console.log('Falha ao atualizar Monitor de IA', { event: 'monitor.update_failed', requestId: request.id, userId: request.user.id, monitorId: params.data.monitorId, error });
+      console.log('Falha ao atualizar Monitor de IA', { event: 'monitor.update_failed', requestId: request.id, userId: request.user.id, monitorId: params.data.monitorId, errorType: error instanceof Error ? error.name : 'UnknownError' });
       return reply.code(500).send({ error: 'MONITOR_UPDATE_FAILED', message: 'Nao foi possivel atualizar o Monitor de IA.' });
     }
   }

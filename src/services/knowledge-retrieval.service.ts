@@ -18,7 +18,7 @@ export class KnowledgeRetrievalService {
 
   async search(input: KnowledgeSearchInput) {
     const startedAt = Date.now();
-    console.log('Busca vetorial de conhecimento iniciada', {
+    console.log('[knowledge-retrieval.service.ts] Busca vetorial de conhecimento iniciada', {
       event: 'monitor.knowledge_retrieval_started',
       teacherId: input.teacherId,
       monitorId: input.monitorId,
@@ -41,7 +41,7 @@ export class KnowledgeRetrievalService {
       excludedBlockIds: input.excludedBlockIds,
     } as HybridRetrievalInput);
 
-    console.log('Busca vetorial de conhecimento concluida', {
+    console.log('[knowledge-retrieval.service.ts] Busca vetorial de conhecimento concluida', {
       event: 'monitor.knowledge_retrieval_completed',
       candidateCount: result.candidates.length,
       uniqueBlockCount: result.citations.length,

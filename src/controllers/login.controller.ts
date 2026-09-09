@@ -2,6 +2,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { loginSchema } from '../models/login.model.js';
 import { LoginRepositoryError } from '../repositories/login.repository.js';
 import { LoginService } from '../services/login.service.js';
+import { AppError } from '../core/errors/app-error.js';
 
 export class LoginController {
   constructor(private readonly service: LoginService) {}
@@ -24,7 +25,7 @@ export class LoginController {
         invalidFields: Object.keys(result.error.flatten().fieldErrors),
         durationMs: Date.now() - startedAt,
       });
-      return reply.code(400).send({ error: 'VALIDATION_ERROR', message: 'E-mail ou senha invalidos.', details: result.error.flatten().fieldErrors });
+      throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 400, publicMessage: 'E-mail ou senha invalidos.', internalDetails: result.error.flatten().fieldErrors });
     }
 
     try {
@@ -75,10 +76,7 @@ export class LoginController {
             providerCode: error.providerCode,
             durationMs: Date.now() - startedAt,
           });
-          return reply.code(403).send({
-            error: 'EMAIL_NOT_CONFIRMED',
-            message: 'Confirme seu e-mail antes de entrar na conta.',
-          });
+          throw new AppError({ code: 'EMAIL_NOT_CONFIRMED', statusCode: 403, publicMessage: 'Confirme seu e-mail antes de entrar na conta.' });
         }
 
         console.log('Login rejeitado pelo Auth', {
@@ -87,18 +85,17 @@ export class LoginController {
           durationMs: Date.now() - startedAt,
           providerStatus: error.status,
           providerCode: error.providerCode,
-          providerMessage: error.message,
+          providerError: error.providerCode ?? 'unknown',
         });
-        return reply.code(401).send({ error: 'INVALID_CREDENTIALS', message: 'E-mail ou senha invalidos.' });
+        throw new AppError({ code: 'INVALID_CREDENTIALS', statusCode: 401, publicMessage: 'E-mail ou senha invalidos.', cause: error });
       }
 
       console.log('Falha inesperada no login', {
         event: 'auth.login.failed',
         requestId: request.id,
         durationMs: Date.now() - startedAt,
-        error,
       });
-      return reply.code(500).send({ error: 'INTERNAL_SERVER_ERROR', message: 'Nao foi possivel realizar o login.' });
+      throw new AppError({ code: 'INTERNAL_SERVER_ERROR', statusCode: 500, publicMessage: 'Nao foi possivel realizar o login.', cause: error });
     }
   }
 }

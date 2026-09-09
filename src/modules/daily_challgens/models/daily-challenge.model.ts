@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const answerChallengeSchema = z.object({
   selectedAnswer: z.string().trim().min(1).max(500),
   responseTimeMs: z.number().int().min(0).max(86_400_000).optional(),
-});
+}).strict();
 
 export const rankingMonthSchema = z.string().regex(/^\d{4}-\d{2}$/, 'month deve estar no formato YYYY-MM');
 

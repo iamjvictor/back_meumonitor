@@ -1,7 +1,7 @@
 import { StudentQuestionAttemptRepository } from '../../student-question-attempts/repositories/student-question-attempt.repository.js';
-import { StudentPerformanceRepository, type StudentPerformanceRow } from '../repositories/student-performance.repository.js';
+import { StudentPerformanceRepository, type StudentPerformanceRow, type StudentFlashcardPerformanceRow } from '../repositories/student-performance.repository.js';
 
-export type { StudentPerformanceRow } from '../repositories/student-performance.repository.js';
+export type { StudentPerformanceRow, StudentFlashcardPerformanceRow } from '../repositories/student-performance.repository.js';
 
 type PerformanceTopic = {
   id: string | null;
@@ -31,6 +31,44 @@ type PerformanceMonitor = {
   incorrectCount: number;
   accuracy: number;
   subjects: PerformanceSubject[];
+};
+
+export type FlashcardTopic = {
+  id: string | null;
+  name: string;
+  reviewedCount: number;
+  retainedCount: number;
+  retentionRate: number;
+  againCount: number;
+  hardCount: number;
+  goodCount: number;
+  easyCount: number;
+};
+
+export type FlashcardSubject = {
+  id: string;
+  name: string;
+  reviewedCount: number;
+  retainedCount: number;
+  retentionRate: number;
+  againCount: number;
+  hardCount: number;
+  goodCount: number;
+  easyCount: number;
+  topics: FlashcardTopic[];
+};
+
+export type FlashcardMonitor = {
+  id: string;
+  name: string;
+  reviewedCount: number;
+  retainedCount: number;
+  retentionRate: number;
+  againCount: number;
+  hardCount: number;
+  goodCount: number;
+  easyCount: number;
+  subjects: FlashcardSubject[];
 };
 
 function accuracy(correctCount: number, answeredCount: number) {
@@ -106,6 +144,132 @@ export function buildPerformanceResponse(rows: StudentPerformanceRow[]) {
   };
 }
 
+export function buildFlashcardsPerformanceResponse(
+  rows: StudentFlashcardPerformanceRow[],
+  overview: { dueCount: number; totalCardsCount: number }
+) {
+  const summaryBase = {
+    reviewedCount: 0,
+    retainedCount: 0,
+    againCount: 0,
+    hardCount: 0,
+    goodCount: 0,
+    easyCount: 0,
+  };
+  const monitors = new Map<string, FlashcardMonitor>();
+  const weakFlashcardTopics = new Map<string, FlashcardTopic>();
+
+  for (const row of rows) {
+    summaryBase.reviewedCount += row.reviewedCount;
+    summaryBase.retainedCount += row.retainedCount;
+    summaryBase.againCount += row.againCount;
+    summaryBase.hardCount += row.hardCount;
+    summaryBase.goodCount += row.goodCount;
+    summaryBase.easyCount += row.easyCount;
+
+    let monitor = monitors.get(row.monitorId);
+    if (!monitor) {
+      monitor = {
+        id: row.monitorId,
+        name: row.monitorName,
+        reviewedCount: 0,
+        retainedCount: 0,
+        retentionRate: 0,
+        againCount: 0,
+        hardCount: 0,
+        goodCount: 0,
+        easyCount: 0,
+        subjects: [],
+      };
+      monitors.set(row.monitorId, monitor);
+    }
+    monitor.reviewedCount += row.reviewedCount;
+    monitor.retainedCount += row.retainedCount;
+    monitor.againCount += row.againCount;
+    monitor.hardCount += row.hardCount;
+    monitor.goodCount += row.goodCount;
+    monitor.easyCount += row.easyCount;
+
+    let subject = monitor.subjects.find((s) => s.id === row.subjectId);
+    if (!subject) {
+      subject = {
+        id: row.subjectId,
+        name: row.subjectName,
+        reviewedCount: 0,
+        retainedCount: 0,
+        retentionRate: 0,
+        againCount: 0,
+        hardCount: 0,
+        goodCount: 0,
+        easyCount: 0,
+        topics: [],
+      };
+      monitor.subjects.push(subject);
+    }
+    subject.reviewedCount += row.reviewedCount;
+    subject.retainedCount += row.retainedCount;
+    subject.againCount += row.againCount;
+    subject.hardCount += row.hardCount;
+    subject.goodCount += row.goodCount;
+    subject.easyCount += row.easyCount;
+
+    const topicKey = `${row.monitorId}:${row.subjectId}:${row.topicId ?? 'none'}`;
+    let topic = weakFlashcardTopics.get(topicKey);
+    if (!topic) {
+      topic = {
+        id: row.topicId,
+        name: row.topicName ?? 'Sem tópico',
+        reviewedCount: 0,
+        retainedCount: 0,
+        retentionRate: 0,
+        againCount: 0,
+        hardCount: 0,
+        goodCount: 0,
+        easyCount: 0,
+      };
+      weakFlashcardTopics.set(topicKey, topic);
+      subject.topics.push(topic);
+    }
+    topic.reviewedCount += row.reviewedCount;
+    topic.retainedCount += row.retainedCount;
+    topic.againCount += row.againCount;
+    topic.hardCount += row.hardCount;
+    topic.goodCount += row.goodCount;
+    topic.easyCount += row.easyCount;
+  }
+
+  const finalizeFlashcardItem = (item: { reviewedCount: number; retainedCount: number; retentionRate: number }) => {
+    item.retentionRate = accuracy(item.retainedCount, item.reviewedCount);
+  };
+
+  const monitorList = Array.from(monitors.values()).map((monitor) => {
+    finalizeFlashcardItem(monitor);
+    monitor.subjects.forEach((subject) => {
+      finalizeFlashcardItem(subject);
+      subject.topics.forEach((topic) => finalizeFlashcardItem(topic));
+      subject.topics.sort((a, b) => a.retentionRate - b.retentionRate || b.reviewedCount - a.reviewedCount);
+    });
+    monitor.subjects.sort((a, b) => a.retentionRate - b.retentionRate || b.reviewedCount - a.reviewedCount);
+    return monitor;
+  });
+
+  const summary = {
+    ...summaryBase,
+    retentionRate: accuracy(summaryBase.retainedCount, summaryBase.reviewedCount),
+    dueCount: overview.dueCount,
+    totalCardsCount: overview.totalCardsCount,
+  };
+
+  return {
+    summary,
+    monitors: monitorList,
+    weakTopics: Array.from(weakFlashcardTopics.values())
+      .map((t) => { finalizeFlashcardItem(t); return t; })
+      .sort((a, b) => a.retentionRate - b.retentionRate || b.reviewedCount - a.reviewedCount)
+      .slice(0, 8),
+  };
+}
+
 export class StudentPerformanceService {
   constructor(
     private readonly repository = new StudentPerformanceRepository(),
@@ -116,7 +280,20 @@ export class StudentPerformanceService {
     const student = await this.repository.findStudentByUserId(userId);
     if (!student) throw new Error('STUDENT_NOT_FOUND');
     const monitorIds = await this.accessRepository.findAccessibleMonitorIds(student.id, userId);
-    const rows = await this.repository.aggregateByScope(student.id, monitorIds);
-    return buildPerformanceResponse(rows);
+
+    const [rows, flashcardRows, flashcardOverview] = await Promise.all([
+      this.repository.aggregateByScope(student.id, monitorIds),
+      this.repository.aggregateFlashcardByScope(student.id, monitorIds),
+      this.repository.getFlashcardOverview(student.id, monitorIds),
+    ]);
+
+    const questionsPerformance = buildPerformanceResponse(rows);
+    const flashcardsPerformance = buildFlashcardsPerformanceResponse(flashcardRows, flashcardOverview);
+
+    return {
+      ...questionsPerformance,
+      flashcards: flashcardsPerformance,
+    };
   }
 }
+

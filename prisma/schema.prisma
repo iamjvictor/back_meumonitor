@@ -568,6 +568,7 @@ model Question {
   topic            MonitorTopic?            @relation(fields: [topicId], references: [id], onDelete: Cascade)
   sources          QuestionSource[]
   topicLinks       QuestionTopic[]
+  contentReports   StudentContentReport[]
   aiGenerations    QuestionAiGeneration[]
   dailyChallenges  DailyChallenge[]
   questionAttempts StudentQuestionAttempt[]
@@ -725,14 +726,14 @@ model Flashcard {
   topic   MonitorTopic      @relation(fields: [topicId], references: [id], onDelete: Cascade)
   sources FlashcardSource[]
 
-  progresses StudentFlashcardProgress[]
-  reviews    StudentFlashcardReviewLog[]
+  progresses     StudentFlashcardProgress[]
+  reviews        StudentFlashcardReviewLog[]
+  contentReports StudentContentReport[]
 
   @@unique([topicId, frontHash])
   @@index([monitorId, subjectId, topicId, status])
   @@map("flashcards")
 }
-
 
 model FlashcardSource {
   flashcardId String   @map("flashcard_id") @db.Uuid
@@ -1116,9 +1117,9 @@ model Student {
   challengeAttempts          DailyChallengeAttempt[]
   flashcardProgresses        StudentFlashcardProgress[]
   flashcardReviews           StudentFlashcardReviewLog[]
+  contentReports             StudentContentReport[]
 
   @@index([userId])
-
   @@index([email])
   @@map("students")
 }
@@ -1386,4 +1387,39 @@ model StudentFlashcardReviewLog {
   @@index([studentId, reviewedAt])
   @@index([flashcardId])
   @@map("student_flashcard_review_logs")
+}
+
+enum ContentReportTargetType {
+  QUESTION
+  FLASHCARD
+}
+
+enum ContentReportStatus {
+  PENDING
+  RESOLVED
+  REJECTED
+}
+
+model StudentContentReport {
+  id          String                  @id @default(uuid()) @db.Uuid
+  studentId   String                  @map("student_id") @db.Uuid
+  targetType  ContentReportTargetType @map("target_type")
+  questionId  String?                 @map("question_id") @db.Uuid
+  flashcardId String?                 @map("flashcard_id") @db.Uuid
+  reason      String
+  description String?                 @db.Text
+  status      ContentReportStatus     @default(PENDING)
+  createdAt   DateTime                @default(now()) @map("created_at")
+  updatedAt   DateTime                @updatedAt @map("updated_at")
+
+  student   Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  question  Question?  @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  flashcard Flashcard? @relation(fields: [flashcardId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([targetType])
+  @@index([questionId])
+  @@index([flashcardId])
+  @@index([status])
+  @@map("student_content_reports")
 }

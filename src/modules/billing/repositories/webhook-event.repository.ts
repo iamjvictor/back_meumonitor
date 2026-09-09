@@ -1,14 +1,16 @@
 import { prisma } from '../../../lib/prisma.js';
+import type { Prisma } from '@prisma/client';
+import type { BillingWebhook } from '../services/webhook.service.js';
 
 export class WebhookEventRepository {
   find(provider: string, providerEventId: string) { return prisma.billingWebhookEvent.findUnique({ where: { provider_providerEventId: { provider, providerEventId } } }); }
-  create(data: any) { return prisma.billingWebhookEvent.create({ data }); }
-  async claimEvent(provider: string, event: any) {
+  create(data: Prisma.BillingWebhookEventUncheckedCreateInput) { return prisma.billingWebhookEvent.create({ data }); }
+  async claimEvent(provider: string, event: BillingWebhook) {
     try {
       const created = await this.create({ provider, providerEventId: event.providerEventId, eventType: event.type, payload: event.payload ?? {} , status: 'CLAIMED' });
       return { created: true, event: created };
-    } catch (error: any) {
-      if (error?.code !== 'P2002') throw error;
+    } catch (error: unknown) {
+      if ((error as { code?: unknown }).code !== 'P2002') throw error;
       const existing = await this.find(provider, event.providerEventId);
       if (!existing) throw error;
       if (existing.status === 'FAILED') {

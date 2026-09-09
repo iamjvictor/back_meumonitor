@@ -18,6 +18,15 @@ import { registerDailyChallgensModule } from './modules/daily_challgens/daily-ch
 import { studentQuestionAttemptRoutes } from './modules/student-question-attempts/routes/student-question-attempt.routes.js';
 import { studentConsistencyRoutes } from './modules/student-consistency/routes/student-consistency.routes.js';
 import { studentPerformanceRoutes } from './modules/student-performance/routes/student-performance.routes.js';
+import { chatRoutes } from './modules/chat/chat.routes.js';
+import { studentContentReportRoutes } from './modules/student-content-report/routes/student-content-report.routes.js';
+import { createStudentProfileModule } from './modules/student-profile/student-profile.module.js';
+import { studentProfileRoutes } from './modules/student-profile/student-profile.routes.js';
+import { createStudentAccessModule } from './modules/student-access/student-access.module.js';
+import { studentAccessRoutes } from './modules/student-access/student-access.routes.js';
+import { createStudentFlashcardsModule } from './modules/student-flashcards/student-flashcards.module.js';
+import { studentFlashcardsRoutes } from './modules/student-flashcards/student-flashcards.routes.js';
+import { createErrorHandler } from './core/errors/error-handler.js';
 
 // Railway terminates HTTPS at the public edge; the Node process listens on HTTP internally.
 const app = Fastify({
@@ -66,6 +75,12 @@ app.get('/health', async () => ({ status: 'ok' }));
 // em um plugin separado com o authMiddleware como hook onRequest.
 await app.register(authRoutes, { prefix: '/api/v1/auth' });
 await app.register(protectedRoutes, { prefix: '/api/v1' });
+const studentProfileModule = createStudentProfileModule();
+await app.register(async (profileApp) => studentProfileRoutes(profileApp, studentProfileModule.controller), { prefix: '/api/v1' });
+const studentAccessModule = createStudentAccessModule();
+await app.register(async (accessApp) => studentAccessRoutes(accessApp, studentAccessModule.controller), { prefix: '/api/v1' });
+const studentFlashcardsModule = createStudentFlashcardsModule({ access: studentAccessModule.service });
+await app.register(async (flashcardsApp) => studentFlashcardsRoutes(flashcardsApp, studentFlashcardsModule.controller), { prefix: '/api/v1' });
 await app.register(teacherRoutes, { prefix: '/api/v1/teachers' });
 await app.register(profileImageRoutes, { prefix: '/api/v1/teachers' });
 await app.register(profileImageRoutes, { prefix: '/api/v1/student' });
@@ -79,11 +94,10 @@ await app.register(registerDailyChallgensModule, { prefix: '/api/v1/student' });
 await app.register(studentQuestionAttemptRoutes, { prefix: '/api/v1/student' });
 await app.register(studentConsistencyRoutes, { prefix: '/api/v1/student' });
 await app.register(studentPerformanceRoutes, { prefix: '/api/v1/student' });
+await app.register(chatRoutes, { prefix: '/api/v1' });
+await app.register(studentContentReportRoutes, { prefix: '/api/v1/student' });
 
 
-app.setErrorHandler((error, request, reply) => {
-  console.log('Erro nao tratado na requisicao', { error });
-  return reply.code(500).send({ error: 'INTERNAL_SERVER_ERROR', message: 'Erro interno do servidor.' });
-});
+app.setErrorHandler(createErrorHandler());
 
 await app.listen({ host: env.HOST, port: env.PORT });

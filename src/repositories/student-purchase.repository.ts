@@ -1,4 +1,17 @@
 import { prisma } from '../lib/prisma.js';
+import type { Prisma } from '@prisma/client';
+
+export type StudentPurchaseCreateData = {
+  studentId: string;
+  status: string;
+  paymentMethod: string;
+  currency: string;
+  subtotalAmount: number;
+  discountAmount: number;
+  totalAmount: number;
+  idempotencyKey: string;
+  items: { create: Array<{ monitorId: string; descriptionSnapshot: string; unitAmount: number; quantity: number }> };
+};
 
 function log(event: string, data: Record<string, unknown> = {}) {
   console.log(event, { event, ...data });
@@ -9,9 +22,9 @@ export class StudentPurchaseRepository {
   async findPublishedMonitors(ids: string[]) { const result = await prisma.monitor.findMany({ where: { id: { in: ids }, status: 'PUBLISHED' }, select: { id: true, name: true } }); log('monitor.student_purchase_db_monitors_lookup_completed', { requestedCount: ids.length, foundCount: result.length }); return result; }
   async findActiveSubscriptions(studentId: string, ids: string[]) { const result = await prisma.studentSubscription.findMany({ where: { studentId, monitorId: { in: ids }, status: 'active' }, select: { monitorId: true } }); log('monitor.student_purchase_db_active_subscriptions_lookup_completed', { studentId, monitorCount: ids.length, activeCount: result.length }); return result; }
   async findPurchaseByIdempotencyKey(key: string) { const result = await prisma.studentPurchase.findUnique({ where: { idempotencyKey: key }, include: { items: true } }); log('monitor.student_purchase_db_idempotency_lookup_completed', { found: Boolean(result), purchaseId: result?.id }); return result; }
-  async createPurchase(data: any) { log('monitor.student_purchase_db_create_started', { studentId: data.studentId, itemCount: data.items?.create?.length, totalAmount: data.totalAmount }); const result = await prisma.studentPurchase.create({ data, include: { items: true } }); log('monitor.student_purchase_db_create_completed', { purchaseId: result.id, status: result.status }); return result; }
+  async createPurchase(data: StudentPurchaseCreateData) { log('monitor.student_purchase_db_create_started', { studentId: data.studentId, itemCount: data.items.create.length, totalAmount: data.totalAmount }); const result = await prisma.studentPurchase.create({ data: data as unknown as Prisma.StudentPurchaseCreateArgs['data'], include: { items: true } }); log('monitor.student_purchase_db_create_completed', { purchaseId: result.id, status: result.status }); return result; }
   findPurchaseForStudent(id: string, studentId: string) { return prisma.studentPurchase.findFirst({ where: { id, studentId }, include: { items: true } }); }
-  async createPaymentSession(data: any) { log('monitor.student_purchase_db_payment_session_create_started', { purchaseId: data.purchaseId, studentId: data.studentId, expiresAt: data.expiresAt }); const result = await prisma.studentPaymentSession.create({ data }); log('monitor.student_purchase_db_payment_session_create_completed', { sessionRecordId: result.id, purchaseId: result.purchaseId }); return result; }
+  async createPaymentSession(data: Prisma.StudentPaymentSessionUncheckedCreateInput) { log('monitor.student_purchase_db_payment_session_create_started', { purchaseId: data.purchaseId, studentId: data.studentId, expiresAt: data.expiresAt }); const result = await prisma.studentPaymentSession.create({ data }); log('monitor.student_purchase_db_payment_session_create_completed', { sessionRecordId: result.id, purchaseId: result.purchaseId }); return result; }
   async updatePurchaseCheckoutReference(purchaseId: string, reference: string) { const result = await prisma.studentPurchase.update({ where: { id: purchaseId }, data: { gateway: 'SIMULATED', gatewayCheckoutId: reference } }); log('monitor.student_purchase_db_checkout_reference_saved', { purchaseId, reference }); return result; }
   async findPaymentSessionByTokenHash(tokenHash: string) { const result = await prisma.studentPaymentSession.findUnique({ where: { tokenHash } }); log('monitor.student_purchase_db_payment_session_lookup_completed', { found: Boolean(result), sessionRecordId: result?.id, purchaseId: result?.purchaseId }); return result; }
   async consumePaymentSession(id: string) { log('monitor.student_purchase_db_payment_session_consume_started', { sessionRecordId: id }); const result = await prisma.studentPaymentSession.updateMany({ where: { id, consumedAt: null }, data: { consumedAt: new Date() } }); const session = await prisma.studentPaymentSession.findUnique({ where: { id } }); log('monitor.student_purchase_db_payment_session_consume_completed', { sessionRecordId: id, consumed: result.count === 1 }); return { consumed: result.count === 1, session }; }
@@ -90,4 +103,3 @@ export class StudentPurchaseRepository {
     return result;
   }
 }
-

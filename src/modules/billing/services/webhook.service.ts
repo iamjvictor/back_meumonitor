@@ -8,13 +8,23 @@ export type BillingWebhook = {
   subscriptionId?: string;
   payload?: unknown;
 };
+type WebhookPurchase = NonNullable<Awaited<ReturnType<import('../../../repositories/student-purchase.repository.js').StudentPurchaseRepository['findPurchaseForStudent']>>>;
+type WebhookResult = {
+  purchaseId: string;
+  status: string;
+  subscriptionId?: string;
+  subscriptionCount?: number;
+  itemCount?: number;
+  enrollmentCount?: number;
+};
+type WebhookResponse = WebhookResult & { status: string; idempotent: boolean; eventId: string };
 
 type WebhookRepository = {
   claimEvent(provider: string, event: BillingWebhook): Promise<{ created: boolean; event: { id: string; status: string } }>;
-  findPurchaseForWebhook(purchaseId: string): Promise<any>;
+  findPurchaseForWebhook(purchaseId: string): Promise<WebhookPurchase | null>;
   markFailed(id: string, message: string): Promise<unknown>;
   markProcessed(id: string): Promise<unknown>;
-  confirmAggregatedPurchase(input: { provider: string; event: BillingWebhook; purchase: any }): Promise<any>;
+  confirmAggregatedPurchase(input: { provider: string; event: BillingWebhook; purchase: WebhookPurchase }): Promise<WebhookResult>;
 };
 
 function log(event: string, data: Record<string, unknown> = {}) { console.log(event, { event, ...data }); }
@@ -22,14 +32,14 @@ function log(event: string, data: Record<string, unknown> = {}) { console.log(ev
 export class WebhookService {
   constructor(private readonly repository: WebhookRepository) {}
 
-  async process(provider: 'SIMULATED' | 'STRIPE', event: BillingWebhook) {
+  async process(provider: 'SIMULATED' | 'STRIPE', event: BillingWebhook): Promise<WebhookResponse> {
     log('monitor.billing_webhook_received', { provider, providerEventId: event.providerEventId, type: event.type, purchaseId: event.purchaseId });
     log('monitor.billing_webhook_started', { provider, providerEventId: event.providerEventId, type: event.type, purchaseId: event.purchaseId });
     if (!event.providerEventId?.trim()) throw new Error('WEBHOOK_EVENT_ID_REQUIRED');
     const claim = await this.repository.claimEvent(provider, event);
     if (!claim.created && claim.event.status === 'PROCESSED') {
       log('monitor.billing_webhook_idempotent_replay', { provider, providerEventId: event.providerEventId, status: claim.event.status });
-      return { status: 'PROCESSED', idempotent: true, eventId: claim.event.id };
+      return { purchaseId: event.purchaseId, status: 'PROCESSED', idempotent: true, eventId: claim.event.id };
     }
     log('monitor.billing_webhook_claimed', { provider, providerEventId: event.providerEventId, eventId: claim.event.id, claimCreated: claim.created, status: claim.event.status });
     log('monitor.billing_webhook_retry_claimed', { provider, providerEventId: event.providerEventId, previousStatus: claim.event.status });

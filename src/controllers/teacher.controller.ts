@@ -1,5 +1,17 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { z } from 'zod';
+import { AppError } from '../core/errors/app-error.js';
 import { TeacherService } from '../services/teacher.service.js';
+
+export const teacherProfileBodySchema = z.object({
+  fullName: z.string().trim().min(1).max(200).optional(), email: z.string().email().optional(),
+  phone: z.string().trim().max(40).optional(), whatsapp: z.string().trim().max(40).optional(),
+  username: z.string().trim().min(1).max(80).optional(), area: z.string().trim().max(120).optional(),
+  customArea: z.string().trim().max(120).optional().nullable(), bio: z.string().trim().max(5000).optional().nullable(),
+  pageSlug: z.string().trim().min(1).max(120).optional(), avatarUrl: z.string().url().optional().nullable(),
+  bannerUrl: z.string().url().optional().nullable(), instagram: z.string().trim().max(200).optional().nullable(),
+  tiktok: z.string().trim().max(200).optional().nullable(), youtube: z.string().trim().max(200).optional().nullable(),
+}).strict();
 
 export class TeacherController {
   constructor(private readonly service: TeacherService) {}
@@ -69,7 +81,7 @@ export class TeacherController {
         requestId: request.id,
         userId: request.user.id,
         durationMs: Date.now() - startedAt,
-        error,
+        errorType: error instanceof Error ? error.name : 'UnknownError',
       });
       return reply.code(500).send({ error: 'TEACHER_PROFILE_LOOKUP_FAILED', message: 'Nao foi possivel buscar o perfil.' });
     }
@@ -96,7 +108,9 @@ export class TeacherController {
       return reply.code(403).send({ error: 'FORBIDDEN', message: 'Apenas contas de professor podem atualizar este perfil.' });
     }
 
-    const input = (request.body as any) || {};
+    const parsed = teacherProfileBodySchema.safeParse(request.body ?? {});
+    if (!parsed.success) throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 422, publicMessage: 'Dados de perfil inválidos.', internalDetails: parsed.error.flatten() });
+    const input = parsed.data;
     const payloadKeys = Object.keys(input);
 
     console.log('Requisicao de atualizacao de perfil recebida', {
@@ -128,20 +142,19 @@ export class TeacherController {
         data: teacher,
         teacher,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Falha ao atualizar perfil do professor', {
         event: 'teacher.profile_update_failed',
         requestId: request.id,
         userId: request.user.id,
-        errorName: err?.name,
-        errorMessage: err?.message,
-        stack: err?.stack,
+        errorName: err instanceof Error ? err.name : 'UnknownError',
+        errorMessage: err instanceof Error ? err.message : 'Unknown error',
         durationMs: Date.now() - startedAt,
       });
 
       return reply.code(400).send({
         error: 'UPDATE_PROFILE_FAILED',
-        message: err.message || 'Erro ao processar atualizacao de perfil.',
+        message: err instanceof Error ? err.message : 'Erro ao processar atualizacao de perfil.',
       });
     }
   }
@@ -161,7 +174,7 @@ export class TeacherController {
       console.log('Falha ao buscar pagina publica do professor', {
         event: 'teacher.public_profile_lookup_failed',
         pageSlug: teacherSlug,
-        error,
+        errorType: error instanceof Error ? error.name : 'UnknownError',
       });
       return reply.code(500).send({ error: 'PUBLIC_PROFILE_LOOKUP_FAILED', message: 'Nao foi possivel carregar a pagina.' });
     }

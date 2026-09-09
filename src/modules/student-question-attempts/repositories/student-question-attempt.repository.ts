@@ -30,11 +30,12 @@ export class StudentQuestionAttemptRepository {
     ]));
   }
 
-  async listApprovedQuestions(input: { monitorIds: string[]; monitorId?: string; topicId?: string; page: number; pageSize: number; studentId: string }) {
+  async listApprovedQuestions(input: { monitorIds: string[]; monitorId?: string; subjectId?: string; topicId?: string; page: number; pageSize: number; studentId: string }) {
     const monitorIds = input.monitorId ? input.monitorIds.filter((id) => id === input.monitorId) : input.monitorIds;
     const where = {
       monitorId: { in: monitorIds },
       status: 'APPROVED' as const,
+      ...(input.subjectId ? { subjectId: input.subjectId } : {}),
       ...(input.topicId ? { topicId: input.topicId } : {}),
     };
     const [questions, total] = await Promise.all([

@@ -1,22 +1,17 @@
 import crypto from 'node:crypto';
 import type { CreatePurchaseInput } from '../models/student-purchase.model.js';
+import type { StudentPurchaseRepository, StudentPurchaseCreateData } from '../repositories/student-purchase.repository.js';
 
 function log(event: string, data: Record<string, unknown> = {}) {
   console.log(event, { event, ...data });
 }
 
-type Repo = {
-  findStudentByUserId(id: string): Promise<{ id: string } | null>; findPublishedMonitors(ids: string[]): Promise<Array<{ id: string; name: string }>>;
-  findActiveSubscriptions(studentId: string, ids: string[]): Promise<Array<{ monitorId: string }>>; findPurchaseByIdempotencyKey(key: string): Promise<any>;
-  createPurchase(data: any): Promise<any>; findPurchaseForStudent(id: string, studentId: string): Promise<any>; createPaymentSession(data: any): Promise<any>;
-  updatePurchaseCheckoutReference?: (purchaseId: string, reference: string) => Promise<any>;
-  findPaymentSessionByTokenHash(hash: string): Promise<any>; consumePaymentSession(id: string): Promise<{ consumed: boolean; session: any }>;
-  confirmPurchase(id: string, studentId: string): Promise<any>; listPurchases(id: string): Promise<any>; listActiveSubscriptions(id: string): Promise<any>;
-};
+export type PurchaseResult = { id: string; studentId: string; status: string; totalAmount: number; currency: string; items: Array<{ monitorId: string; unitAmount: number }> };
+type Repo = Pick<StudentPurchaseRepository, 'findStudentByUserId' | 'findPublishedMonitors' | 'findActiveSubscriptions' | 'findPurchaseByIdempotencyKey' | 'findPurchaseForStudent' | 'createPaymentSession' | 'updatePurchaseCheckoutReference' | 'findPaymentSessionByTokenHash' | 'consumePaymentSession' | 'confirmPurchase' | 'listPurchases' | 'listActiveSubscriptions'> & { createPurchase(data: StudentPurchaseCreateData): Promise<PurchaseResult> };
 
 export class StudentPurchaseService {
   constructor(private readonly repo: Repo, private readonly config = { simulationEnabled: false, testPriceCents: 1990 }) {}
-  async createPurchase(userId: string, input: CreatePurchaseInput, key: string) {
+  async createPurchase(userId: string, input: CreatePurchaseInput, key: string): Promise<PurchaseResult> {
     log('monitor.student_purchase_create_started', { userId, monitorCount: input.monitorIds.length, paymentMethod: input.paymentMethod, hasIdempotencyKey: Boolean(key?.trim()) });
     if (!key?.trim()) throw new Error('IDEMPOTENCY_KEY_REQUIRED');
     log('monitor.student_purchase_idempotency_key_validated', { userId, keyProvided: true });
@@ -44,9 +39,10 @@ export class StudentPurchaseService {
       const purchase = await this.repo.createPurchase(data);
       log('monitor.student_purchase_persist_completed', { studentId: student.id, purchaseId: purchase.id, status: purchase.status, totalAmount: purchase.totalAmount });
       return purchase;
-    } catch (e: any) {
-      if (e?.code === 'P2002') { const found = await this.repo.findPurchaseByIdempotencyKey(key); if (found) { log('monitor.student_purchase_idempotency_race_resolved', { studentId: student.id, purchaseId: found.id }); return found; } }
-      log('monitor.student_purchase_create_failed', { userId, errorCode: e?.code, errorMessage: e?.message });
+    } catch (e: unknown) {
+      const code = e instanceof Error && 'code' in e ? String((e as { code?: unknown }).code) : undefined;
+      if (code === 'P2002') { const found = await this.repo.findPurchaseByIdempotencyKey(key); if (found) { log('monitor.student_purchase_idempotency_race_resolved', { studentId: student.id, purchaseId: found.id }); return found; } }
+      log('monitor.student_purchase_create_failed', { userId, errorCode: code ?? 'UNKNOWN_ERROR' });
       throw e;
     }
   }
@@ -64,7 +60,7 @@ export class StudentPurchaseService {
     log('monitor.student_purchase_simulated_session_created', { studentId: student.id, purchaseId, expiresAt: expiresAt.toISOString(), amount: purchase.totalAmount, currency: purchase.currency, tokenStoredAsHash: true });
     return { sessionId, expiresAt, amount: purchase.totalAmount, currency: purchase.currency, checkoutUrl: '/checkout/simulado', checkoutReference: `simulated:${paymentSession.id}` };
   }
-  async simulatedConfirmation(userId: string, purchaseId: string, sessionId: string) {
+  async simulatedConfirmation(userId: string, purchaseId: string, sessionId: string): Promise<{ status: string; purchaseId?: string }> {
     log('monitor.student_purchase_simulated_webhook_received', { userId, purchaseId, source: 'SIMULATED_CHECKOUT', sessionProvided: Boolean(sessionId) });
     if (!this.config.simulationEnabled) throw new Error('SIMULATION_DISABLED');
     const student = await this.repo.findStudentByUserId(userId); if (!student) throw new Error('STUDENT_NOT_FOUND');
@@ -80,6 +76,7 @@ export class StudentPurchaseService {
     if (!consumed.consumed) { if (purchase.status === 'PAID') { log('monitor.student_purchase_simulated_confirmation_idempotent', { studentId: student.id, purchaseId }); return purchase; } throw new Error('INVALID_CHECKOUT_SESSION'); }
     log('monitor.student_purchase_subscription_activation_started', { studentId: student.id, purchaseId, itemCount: purchase.items?.length });
     const confirmed = await this.repo.confirmPurchase(purchaseId, student.id);
+    if (!confirmed) throw new Error('PURCHASE_CONFIRMATION_FAILED');
     log('monitor.student_purchase_paid_transition_completed', { studentId: student.id, purchaseId, previousStatus: purchase.status, currentStatus: confirmed?.status });
     log('monitor.student_purchase_subscription_activation_completed', { studentId: student.id, purchaseId, status: confirmed?.status });
     return confirmed;

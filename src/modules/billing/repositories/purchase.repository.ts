@@ -1,5 +1,6 @@
 import { StudentPurchaseRepository } from '../../../repositories/student-purchase.repository.js';
 import { prisma } from '../../../lib/prisma.js';
+import type { BillingWebhook } from '../services/webhook.service.js';
 
 function log(event: string, data: Record<string, unknown> = {}) { console.log(event, { event, ...data }); }
 
@@ -9,7 +10,7 @@ export class PurchaseRepository extends StudentPurchaseRepository {
     return prisma.studentPurchase.findUnique({ where: { id: purchaseId }, include: { items: true } });
   }
 
-  async confirmAggregatedPurchase(input: { provider: string; event: any; purchase: any }) {
+  async confirmAggregatedPurchase(input: { provider: string; event: BillingWebhook; purchase: NonNullable<Awaited<ReturnType<StudentPurchaseRepository['findPurchaseForStudent']>>> }) {
     const { event, purchase } = input;
     log('monitor.billing_purchase_approval_transaction_started', { provider: input.provider, purchaseId: purchase.id, itemCount: purchase.items.length });
     return prisma.$transaction(async (tx) => {

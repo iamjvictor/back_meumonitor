@@ -114,16 +114,4 @@ export class DailyChallengeRepository {
     });
   }
 
-  getRanking(monitorId: string, start: Date, end: Date) {
-    return prisma.dailyChallengeAttempt.groupBy({
-      by: ['studentId'],
-      where: {
-        isCorrect: true,
-        answeredAt: { gte: start, lt: end },
-        dailyChallenge: { monitorId },
-      },
-      _count: { _all: true },
-      orderBy: { _count: { studentId: 'desc' } },
-    });
-  }
 }

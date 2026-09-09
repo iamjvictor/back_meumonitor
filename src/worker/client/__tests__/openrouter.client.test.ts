@@ -127,3 +127,39 @@ test('timeout continua ativo durante o consumo do body', { concurrency: false },
   }), (error: unknown) => error instanceof StructuredCompletionError && error.code === 'TIMEOUT');
   globalThis.fetch = originalFetch;
 });
+
+test('createChatCompletion envia completion textual com configuração do chat', { concurrency: false }, async () => {
+  setBackendEnv();
+  const { OpenRouterClient } = await import('../openrouter.client.js');
+  const originalFetch = globalThis.fetch;
+  let receivedUrl = '';
+  let receivedBody: Record<string, unknown> | undefined;
+  globalThis.fetch = async (url, init) => {
+    receivedUrl = String(url);
+    receivedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(JSON.stringify({
+      choices: [{ finish_reason: 'stop', message: { content: 'Resposta pedagógica.' } }],
+      usage: { prompt_tokens: 12, completion_tokens: 8, total_tokens: 20 },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  const result = await new OpenRouterClient().createChatCompletion({
+    model: 'openrouter/chat-test',
+    maxTokens: 321,
+    temperature: 0.4,
+    timeoutMs: 1_000,
+    messages: [{ role: 'system', content: 'Você é um tutor.' }, { role: 'user', content: 'Explique.' }],
+  });
+
+  assert.equal(result.content, 'Resposta pedagógica.');
+  assert.equal(receivedUrl, 'https://openrouter.ai/api/v1/chat/completions');
+  assert.deepEqual(receivedBody?.model, 'openrouter/chat-test');
+  assert.deepEqual(receivedBody?.max_tokens, 321);
+  assert.deepEqual(receivedBody?.temperature, 0.4);
+  assert.deepEqual(receivedBody?.messages, [
+    { role: 'system', content: 'Você é um tutor.' },
+    { role: 'user', content: 'Explique.' },
+  ]);
+
+  globalThis.fetch = originalFetch;
+});

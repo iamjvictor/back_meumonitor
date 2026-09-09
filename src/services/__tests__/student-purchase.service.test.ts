@@ -29,7 +29,7 @@ test('creates a purchase using backend price and rejects client price', async ()
   const service = new StudentPurchaseService(repo, { simulationEnabled: true, testPriceCents: 1990 });
   const result = await service.createPurchase('user-1', { monitorIds: ['m1'], paymentMethod: 'PIX' }, 'key-1');
   assert.equal(result.totalAmount, 1990);
-  assert.equal(result.items[0].unitAmount, 1990);
+  assert.equal(result.items[0]?.unitAmount, 1990);
 });
 
 test('rejects duplicate monitor ids', async () => {
