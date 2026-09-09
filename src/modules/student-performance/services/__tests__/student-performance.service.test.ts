@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildPerformanceResponse, type StudentPerformanceRow } from '../student-performance.service.js';
+import {
+  buildPerformanceResponse,
+  buildFlashcardsPerformanceResponse,
+  type StudentPerformanceRow,
+  type StudentFlashcardPerformanceRow,
+} from '../student-performance.service.js';
 
 test('agrupa o desempenho mantendo monitores, matérias e tópicos separados', () => {
   const rows: StudentPerformanceRow[] = [
@@ -38,3 +43,34 @@ test('agrupa o desempenho mantendo monitores, matérias e tópicos separados', (
   assert.equal(result.monitors[1]?.subjects[0]?.name, 'História');
   assert.equal(result.weakTopics[0]?.name, 'Cinemática');
 });
+
+test('agrupa o desempenho em flashcards por retenção e ratings', () => {
+  const flashcardRows: StudentFlashcardPerformanceRow[] = [
+    {
+      monitorId: 'm1', monitorName: 'Medicina',
+      subjectId: 's1', subjectName: 'Anatomia',
+      topicId: 't1', topicName: 'Sistema Osseo',
+      reviewedCount: 10, retainedCount: 8,
+      againCount: 1, hardCount: 1, goodCount: 5, easyCount: 3,
+      lastReviewedAt: '2026-09-07T10:00:00.000Z',
+    },
+  ];
+
+  const result = buildFlashcardsPerformanceResponse(flashcardRows, { dueCount: 3, totalCardsCount: 25 });
+
+  assert.deepEqual(result.summary, {
+    reviewedCount: 10,
+    retainedCount: 8,
+    againCount: 1,
+    hardCount: 1,
+    goodCount: 5,
+    easyCount: 3,
+    retentionRate: 80,
+    dueCount: 3,
+    totalCardsCount: 25,
+  });
+  assert.equal(result.monitors.length, 1);
+  assert.equal(result.monitors[0]?.name, 'Medicina');
+  assert.equal(result.monitors[0]?.retentionRate, 80);
+});
+
