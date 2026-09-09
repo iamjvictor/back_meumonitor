@@ -1,11 +1,15 @@
 import { DailyChallengeRepository } from '../repositories/daily-challenge.repository.js';
+import { DailyChallengeRankingRepository } from '../repositories/daily-challenge-ranking.repository.js';
 import { getSaoPauloChallengeWindow, SAO_PAULO_TIMEZONE } from './daily-challenge-selection.service.js';
 import type { AnswerChallengeInput } from '../models/daily-challenge.model.js';
 
 function log(event: string, data: Record<string, unknown> = {}) { console.log(event, { event, ...data }); }
 
 export class DailyChallengeService {
-  constructor(private readonly repository = new DailyChallengeRepository()) {}
+  constructor(
+    private readonly repository = new DailyChallengeRepository(),
+    private readonly rankingRepository = new DailyChallengeRankingRepository(),
+  ) {}
 
   private async resolveAccess(userId: string, monitorId: string) {
     const student = await this.repository.findStudentByUserId(userId);
@@ -88,5 +92,10 @@ export class DailyChallengeService {
     log('monitor.daily_challenge_attempt_created', { userId, studentId: student.id, challengeId, isCorrect: result.attempt.isCorrect });
     log('monitor.daily_challenge_performance_updated', { userId, studentId: student.id, challengeId, mode: 'DAILY_CHALLENGE' });
     return { alreadyAnswered: false, isCorrect: result.attempt.isCorrect, correctAnswer: result.challenge.question.correctAnswer, questionAttemptId: result.attempt.questionAttemptId, explanation: result.challenge.question.explanation };
+  }
+
+  async getRanking(userId: string, monitorId: string, start: Date, end: Date) {
+    const student = await this.resolveAccess(userId, monitorId);
+    return this.rankingRepository.getRanking(monitorId, start, end, student.id);
   }
 }
