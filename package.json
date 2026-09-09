@@ -19,9 +19,9 @@
     "test:document-parser-persistence-contract": "node --import tsx src/scripts/test-document-parser-persistence-contract.ts",
     "test:document-parser-storage-contract": "node --import tsx src/scripts/test-document-parser-storage-contract.ts",
     "test:document-parser-unit": "node --import tsx --test src/worker/services/document-parser/__tests__/layout-document-normalizer.test.ts src/worker/services/document-parser/__tests__/mineru-parser.adapter.test.ts",
+    "test:chat": "node --import tsx --test src/modules/chat/__tests__/chat.module.test.ts src/modules/chat/models/__tests__/chat.model.test.ts src/modules/chat/services/__tests__/chat-authorization.service.test.ts src/modules/chat/services/__tests__/chat-question-context.service.test.ts src/modules/chat/services/__tests__/chat.service.test.ts src/modules/chat/services/__tests__/chat-prompt.builder.test.ts src/modules/chat/providers/__tests__/openrouter-chat.gateway.test.ts src/modules/chat/repositories/__tests__/prisma-chat-access.repository.test.ts src/modules/chat/repositories/__tests__/redis-chat-history.repository.test.ts src/modules/chat/rag/services/__tests__/chat-query.builder.test.ts src/modules/chat/rag/services/__tests__/chat-query.latency.test.ts src/modules/chat/rag/services/__tests__/chat-retrieval-strategy.service.test.ts src/modules/chat/rag/services/__tests__/chat-rag.service.test.ts src/modules/chat/rag/providers/__tests__/knowledge-retrieval-chat.provider.test.ts src/modules/chat/rag/providers/__tests__/prisma-question-evidence.provider.test.ts src/modules/chat/rag/providers/__tests__/prisma-flashcard-evidence.provider.test.ts src/modules/chat/rag/repositories/__tests__/redis-chat-evidence.repository.test.ts src/modules/chat/rag/services/__tests__/question-evidence.context.test.ts src/modules/chat/rag/services/__tests__/flashcard-evidence.context.test.ts src/modules/chat/rag/services/__tests__/chat-context.assembler.test.ts src/modules/chat/rag/services/__tests__/chat-context-resolver.service.test.ts src/modules/chat/rag/__tests__/chat-rag.observability.test.ts src/modules/chat/rag/services/__tests__/question-evidence-sufficiency.test.ts src/modules/chat/rag/__tests__/question-fast-path.performance.test.ts",
     "test:flashcard-generation": "node --experimental-test-module-mocks --import tsx --test src/worker/services/__tests__/flashcard-quality.service.test.ts src/worker/services/__tests__/flashcard-generation.service.test.ts src/worker/services/__tests__/document-worker.service.test.ts src/worker/client/__tests__/openrouter.client.test.ts src/repositories/__tests__/document-parser.repository.test.ts src/repositories/__tests__/flashcard.repository.test.ts",
     "test:document-ingestion-v3": "node --import tsx ../test/scripts/integration/test-document-ingestion-v3.ts",
-    "test:document-parser-persistence-contract": "node --import tsx src/scripts/test-document-parser-persistence-contract.ts",
     "test:chunk-quality": "node --import tsx ../test/scripts/chunks/test-chunk-quality.ts",
     "test:question-context-packs": "node --import tsx ../test/scripts/context-packs/test-question-context-pack.ts && node --import tsx ../test/scripts/context-packs/test-question-context-pack-chunking.ts && node --import tsx ../test/scripts/context-packs/test-context-packs-organization-contract.ts",
     "test:question-spans": "node --import tsx ../test/scripts/question-spans/test-layout-content-normalizer.ts && node --import tsx ../test/scripts/question-spans/test-pedagogical-assembler.ts && node --import tsx ../test/scripts/question-spans/test-question-span-gate.ts && node --import tsx ../test/scripts/question-spans/test-question-spans-organization-contract.ts",
@@ -60,9 +60,13 @@
     "zod": "^4.1.5"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.15.0",
     "@types/pg": "^8.21.0",
+    "eslint": "^10.10.0",
+    "globals": "^17.12.0",
     "tsx": "^4.19.4",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.70.0"
   }
 }

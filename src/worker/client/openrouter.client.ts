@@ -36,8 +36,17 @@ export type StructuredRequestUsage = {
 };
 
 type ChatMessage = {
-  role: 'system' | 'user';
+  role: 'system' | 'user' | 'assistant';
   content: string;
+};
+
+export type ChatCompletionResult = {
+  content: string;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
 };
 
 export class StructuredCompletionError extends Error {
@@ -66,7 +75,7 @@ export class StructuredCompletionError extends Error {
 }
 
 export class OpenRouterClient {
-  async createEmbeddings(input: string[]): Promise<number[][]> {
+  async createEmbeddings(input: string[], options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<number[][]> {
     console.log('Validando cliente do OpenRouter', {
       event: 'monitor.openrouter_client_validation_started',
       inputCount: input.length,
@@ -98,60 +107,208 @@ export class OpenRouterClient {
     });
 
     const requestStartedAt = Date.now();
-    const response = await fetch(EMBEDDINGS_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: env.OPENROUTER_EMBEDDING_MODEL,
-        input,
-        dimensions: env.OPENROUTER_EMBEDDING_DIMENSIONS,
-        encoding_format: 'float',
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = options.timeoutMs
+      ? setTimeout(() => controller.abort(), options.timeoutMs)
+      : undefined;
+    options.signal?.addEventListener('abort', () => controller.abort(), { once: true });
+    if (options.signal?.aborted) controller.abort();
 
-    console.log('Resposta recebida do OpenRouter', {
-      event: 'monitor.embedding_http_response_received',
-      statusCode: response.status,
-      ok: response.ok,
-      durationMs: Date.now() - requestStartedAt,
-    });
-
-    const payload = (await response.json()) as EmbeddingResponse;
-    if (!response.ok || !payload.data) {
-      console.log('OpenRouter retornou erro de embeddings', {
-        event: 'monitor.embedding_request_failed',
-        statusCode: response.status,
-        message: payload.error?.message || 'resposta invalida',
+    try {
+      const response = await fetch(EMBEDDINGS_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: env.OPENROUTER_EMBEDDING_MODEL,
+          input,
+          dimensions: env.OPENROUTER_EMBEDDING_DIMENSIONS,
+          encoding_format: 'float',
+        }),
       });
-      throw new Error(
-        `OpenRouter embeddings falhou (${response.status}): ${payload.error?.message || 'resposta invalida'}`,
-      );
+
+      console.log('Resposta recebida do OpenRouter', {
+        event: 'monitor.embedding_http_response_received',
+        statusCode: response.status,
+        ok: response.ok,
+        durationMs: Date.now() - requestStartedAt,
+      });
+
+      const payload = (await Promise.race([
+        response.json(),
+        new Promise<never>((_, reject) => controller.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })),
+      ])) as EmbeddingResponse;
+      if (!response.ok || !payload.data) {
+        console.log('OpenRouter retornou erro de embeddings', {
+          event: 'monitor.embedding_request_failed',
+          statusCode: response.status,
+          message: payload.error?.message || 'resposta invalida',
+        });
+        throw new Error(
+          `OpenRouter embeddings falhou (${response.status}): ${payload.error?.message || 'resposta invalida'}`,
+        );
+      }
+
+      const embeddings = [...payload.data]
+        .sort((left, right) => left.index - right.index)
+        .map((item) => item.embedding);
+
+      if (
+        embeddings.length !== input.length ||
+        embeddings.some((embedding) => embedding.length !== env.OPENROUTER_EMBEDDING_DIMENSIONS)
+      ) {
+        throw new Error('OpenRouter retornou quantidade ou dimensao de embeddings inesperada.');
+      }
+
+      console.log('Embeddings recebidos do OpenRouter', {
+        event: 'monitor.embedding_request_completed',
+        model: env.OPENROUTER_EMBEDDING_MODEL,
+        embeddingCount: embeddings.length,
+        dimensions: embeddings[0]?.length || 0,
+        promptTokens: payload.usage?.prompt_tokens,
+        totalTokens: payload.usage?.total_tokens,
+      });
+
+      return embeddings;
+    } catch (error) {
+      if (controller.signal.aborted) {
+        console.log('Embedding interrompido por timeout', {
+          event: 'monitor.embedding_request_timeout',
+          model: env.OPENROUTER_EMBEDDING_MODEL,
+          timeoutMs: options.timeoutMs,
+          durationMs: Date.now() - requestStartedAt,
+        });
+        const timeoutError = new Error('OpenRouter embeddings excedeu o timeout configurado.');
+        timeoutError.name = 'EMBEDDING_TIMEOUT';
+        throw timeoutError;
+      }
+      throw error;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+
+  async createChatCompletion(input: {
+    messages: ChatMessage[];
+    model?: string;
+    maxTokens?: number;
+    temperature?: number;
+    timeoutMs?: number;
+    signal?: AbortSignal;
+  }): Promise<ChatCompletionResult> {
+    if (!env.OPENROUTER_API_KEY) {
+      throw new Error('OPENROUTER_API_KEY nao configurada para o worker.');
     }
 
-    const embeddings = [...payload.data]
-      .sort((left, right) => left.index - right.index)
-      .map((item) => item.embedding);
+    const model = input.model ?? env.OPENROUTER_QUESTION_MODEL;
+    const requestStartedAt = Date.now();
+    console.log('[openrouter.client.ts] Solicitação de geração iniciada', {
+      event: 'monitor.chat_generation_request_started',
+      model,
+      messageCount: input.messages.length,
+      inputChars: input.messages.reduce((total, message) => total + message.content.length, 0),
+      maxTokens: input.maxTokens ?? 600,
+      temperature: input.temperature ?? 0.2,
+    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), input.timeoutMs ?? env.OPENROUTER_STRUCTURED_TIMEOUT_MS);
+    input.signal?.addEventListener('abort', () => controller.abort(), { once: true });
+    if (input.signal?.aborted) controller.abort();
 
-    if (
-      embeddings.length !== input.length ||
-      embeddings.some((embedding) => embedding.length !== env.OPENROUTER_EMBEDDING_DIMENSIONS)
-    ) {
-      throw new Error('OpenRouter retornou quantidade ou dimensao de embeddings inesperada.');
-    }
+    let response: Response;
+    try {
+      response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model,
+          messages: input.messages,
+          temperature: input.temperature ?? 0.2,
+          max_tokens: input.maxTokens ?? 600,
+          reasoning: { effort: aiModels.reasoningEffort },
+        }),
+      });
 
-    console.log('Embeddings recebidos do OpenRouter', {
-      event: 'monitor.embedding_request_completed',
-      model: env.OPENROUTER_EMBEDDING_MODEL,
-      embeddingCount: embeddings.length,
-      dimensions: embeddings[0]?.length || 0,
+      const payload = (await Promise.race([
+        response.json(),
+        new Promise<never>((_, reject) => controller.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })),
+      ])) as ChatResponse;
+      const content = payload.choices?.[0]?.message?.content?.trim();
+      const finishReason = payload.choices?.[0]?.finish_reason;
+
+      console.log('[openrouter.client.ts] Resposta HTTP da geração recebida', {
+        event: 'monitor.chat_generation_http_response_received',
+        model,
+        statusCode: response.status,
+        ok: response.ok,
+        finishReason,
+        durationMs: Date.now() - requestStartedAt,
+      });
+
+      if (!response.ok) {
+        const code = response.status === 429 ? 'RATE_LIMITED' : 'PROVIDER_ERROR';
+        throw new StructuredCompletionError(
+          code,
+          `OpenRouter chat falhou (${response.status}).`,
+          { model, statusCode: response.status, finishReason },
+        );
+      }
+      if (finishReason === 'length') {
+        throw new StructuredCompletionError(
+          'MODEL_OUTPUT_TRUNCATED',
+          'A resposta do chat terminou por limite de tokens.',
+          { model, finishReason },
+        );
+      }
+      if (!content) {
+        throw new StructuredCompletionError(
+          'EMPTY_RESPONSE',
+          'OpenRouter nao retornou conteudo para o chat.',
+          { model, finishReason },
+        );
+      }
+
+      console.log('[openrouter.client.ts] Geração concluída', {
+        event: 'monitor.chat_generation_request_completed',
+        model,
+        finishReason,
+        durationMs: Date.now() - requestStartedAt,
       promptTokens: payload.usage?.prompt_tokens,
+      completionTokens: payload.usage?.completion_tokens,
       totalTokens: payload.usage?.total_tokens,
+      responseChars: content.length,
+      responsePreview: env.NODE_ENV === 'production' ? undefined : content.slice(0, 500),
     });
 
-    return embeddings;
+      return {
+        content,
+        usage: {
+          promptTokens: payload.usage?.prompt_tokens ?? 0,
+          completionTokens: payload.usage?.completion_tokens ?? 0,
+          totalTokens: payload.usage?.total_tokens ?? 0,
+        },
+      };
+    } catch (error) {
+      console.log('[openrouter.client.ts] Geração falhou', {
+        event: 'monitor.chat_generation_request_failed',
+        model,
+        durationMs: Date.now() - requestStartedAt,
+        reason: error instanceof Error ? error.name : 'UNKNOWN_ERROR',
+      });
+      if (controller.signal.aborted) {
+        throw new StructuredCompletionError('TIMEOUT', 'OpenRouter excedeu o timeout configurado.', { model });
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async createStructuredChatCompletion<T>(input: {

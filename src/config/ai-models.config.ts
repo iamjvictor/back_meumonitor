@@ -3,6 +3,10 @@ import { env } from './env.js';
 export const aiModels = {
   reasoningEffort: env.AI_REASONING_EFFORT,
   questionExtraction: env.QUESTION_EXTRACTION_MODEL || env.OPENROUTER_QUESTION_MODEL,
+  chat: env.CHAT_AI_MODEL || env.OPENROUTER_QUESTION_MODEL,
+  chatMaxTokens: env.CHAT_AI_MAX_TOKENS,
+  chatTemperature: env.CHAT_AI_TEMPERATURE,
+  chatTimeoutMs: env.CHAT_AI_TIMEOUT_MS,
   flashcardGeneration: env.FLASHCARD_GENERATION_MODEL,
   flashcardGenerationFallback: env.FLASHCARD_GENERATION_FALLBACK_MODEL,
   questionExtractionMaxTokens: env.QUESTION_EXTRACTION_MAX_TOKENS,
