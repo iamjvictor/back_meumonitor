@@ -194,8 +194,8 @@ export async function chatRoutes(app: FastifyInstance) {
       let flashcardEvidence: FlashcardEvidenceResult | null = null;
       if (body.data.questionContext) {
         const requestedQuestion = body.data.questionContext;
-        const question = await prisma.question.findUnique({
-          where: { id: requestedQuestion.questionId },
+        const question = await prisma.question.findFirst({
+          where: { id: requestedQuestion.questionId, status: 'APPROVED' },
           select: {
             id: true,
             monitorId: true,

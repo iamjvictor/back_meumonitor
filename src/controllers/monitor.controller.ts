@@ -213,4 +213,23 @@ export class MonitorController {
       return reply.code(500).send({ error: 'MONITOR_UPDATE_FAILED', message: 'Nao foi possivel atualizar o Monitor de IA.' });
     }
   }
+
+  async getQuestionBankCatalog(request: FastifyRequest, reply: FastifyReply) {
+    if (!request.user) {
+      return reply.code(401).send({ error: 'UNAUTHENTICATED', message: 'Sessao de usuario obrigatoria.' });
+    }
+
+    try {
+      const catalog = await this.service.getQuestionBankCatalog();
+      return reply.code(200).send({ data: catalog });
+    } catch (error) {
+      console.log('Falha ao consultar catalogo do banco de questoes', {
+        event: 'question_bank.catalog_failed',
+        requestId: request.id,
+        userId: request.user.id,
+        error: error instanceof Error ? error.message : 'UnknownError',
+      });
+      return reply.code(500).send({ error: 'QUESTION_BANK_CATALOG_FAILED', message: 'Nao foi possivel carregar o catalogo de questoes.' });
+    }
+  }
 }

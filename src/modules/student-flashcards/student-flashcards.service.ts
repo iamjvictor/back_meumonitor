@@ -25,9 +25,9 @@ export interface FlashcardRepository {
     reviewedAt: Date;
     nextReviewAt: Date;
   }): Promise<void>;
-  findDueCards?(input: { studentId: string; monitorIds: string[]; excludeFlashcardId?: string }): Promise<RandomFlashcard[]>;
-  findUnreviewedCards?(input: { studentId: string; monitorIds: string[]; excludeFlashcardId?: string }): Promise<RandomFlashcard[]>;
-  findFallbackCards?(input: { monitorIds: string[]; excludeFlashcardId?: string }): Promise<RandomFlashcard[]>;
+  findDueCards?(input: { studentId: string; monitorIds: string[]; subjectId?: string; topicId?: string; excludeFlashcardId?: string }): Promise<RandomFlashcard[]>;
+  findUnreviewedCards?(input: { studentId: string; monitorIds: string[]; subjectId?: string; topicId?: string; excludeFlashcardId?: string }): Promise<RandomFlashcard[]>;
+  findFallbackCards?(input: { monitorIds: string[]; subjectId?: string; topicId?: string; excludeFlashcardId?: string }): Promise<RandomFlashcard[]>;
 }
 
 export interface FlashcardAccess {
@@ -53,7 +53,7 @@ export function createStudentFlashcardsService(input: {
   repository: FlashcardRepository;
 }) {
   return {
-    async getRandomFlashcard(args: { userId: string; monitorId?: string; excludeFlashcardId?: string }): Promise<RandomFlashcard> {
+    async getRandomFlashcard(args: { userId: string; monitorId?: string; subjectId?: string; topicId?: string; excludeFlashcardId?: string }): Promise<RandomFlashcard> {
       let studentId: string;
       let monitorIds: string[];
       if (args.monitorId) {
@@ -65,15 +65,20 @@ export function createStudentFlashcardsService(input: {
         if (monitorIds.length === 0) throw new Error('NO_ACCESSIBLE_MONITORS');
       }
 
-      const due = await input.repository.findDueCards?.({ studentId, monitorIds, excludeFlashcardId: args.excludeFlashcardId }) ?? [];
+      const filter = {
+        ...(args.subjectId ? { subjectId: args.subjectId } : {}),
+        ...(args.topicId ? { topicId: args.topicId } : {}),
+        ...(args.excludeFlashcardId ? { excludeFlashcardId: args.excludeFlashcardId } : {}),
+      };
+      const due = await input.repository.findDueCards?.({ studentId, monitorIds, ...filter }) ?? [];
       const dueCard = pickRandomAvailable(due, args.excludeFlashcardId);
       if (dueCard) return dueCard;
 
-      const fresh = await input.repository.findUnreviewedCards?.({ studentId, monitorIds, excludeFlashcardId: args.excludeFlashcardId }) ?? [];
+      const fresh = await input.repository.findUnreviewedCards?.({ studentId, monitorIds, ...filter }) ?? [];
       const freshCard = pickRandomAvailable(fresh, args.excludeFlashcardId);
       if (freshCard) return freshCard;
 
-      const fallback = await input.repository.findFallbackCards?.({ monitorIds, excludeFlashcardId: args.excludeFlashcardId }) ?? [];
+      const fallback = await input.repository.findFallbackCards?.({ monitorIds, ...filter }) ?? [];
       const fallbackCard = pickRandomAvailable(fallback, args.excludeFlashcardId);
       if (fallbackCard) return fallbackCard;
 

@@ -67,6 +67,7 @@ model Monitor {
   billingSubscriptionChanges BillingSubscriptionChange[]
   dailyChallenges            DailyChallenge[]
   questionAttempts           StudentQuestionAttempt[]
+  weeklySimulations          WeeklySimulation[]
 
   @@index([teacherId, status])
   @@map("monitors")
@@ -80,13 +81,14 @@ model MonitorSubject {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  monitor            Monitor             @relation(fields: [monitorId], references: [id], onDelete: Cascade)
-  topics             MonitorTopic[]
-  documents          MonitorDocument[]
-  chunks             DocumentChunk[]
-  questions          Question[]
-  flashcards         Flashcard[]
-  retrievalEvalCases RetrievalEvalCase[]
+  monitor               Monitor                @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  topics                MonitorTopic[]
+  documents             MonitorDocument[]
+  chunks                DocumentChunk[]
+  questions             Question[]
+  flashcards            Flashcard[]
+  retrievalEvalCases    RetrievalEvalCase[]
+  weeklySimulationItems WeeklySimulationItem[]
 
   @@unique([monitorId, name])
   @@unique([monitorId, position])
@@ -112,18 +114,34 @@ model MonitorTopic {
   createdAt                DateTime  @default(now()) @map("created_at")
   updatedAt                DateTime  @updatedAt @map("updated_at")
 
-  subject            MonitorSubject         @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  documents          MonitorDocument[]
-  documentLinks      MonitorDocumentTopic[]
-  chunkLinks         DocumentChunkTopic[]
-  questions          Question[]
-  flashcards         Flashcard[]
-  questionTopicLinks QuestionTopic[]
-  blockTopicLinks    DocumentBlockTopic[]
+  subject               MonitorSubject         @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  documents             MonitorDocument[]
+  documentLinks         MonitorDocumentTopic[]
+  chunkLinks            DocumentChunkTopic[]
+  questions             Question[]
+  flashcards            Flashcard[]
+  questionTopicLinks    QuestionTopic[]
+  blockTopicLinks       DocumentBlockTopic[]
+  weeklySimulationItems WeeklySimulationItem[]
+  questionBankSelections MonitorQuestionBankSelection[]
 
   @@unique([subjectId, name])
   @@unique([subjectId, position])
   @@map("monitor_topics")
+}
+
+model MonitorQuestionBankSelection {
+  id             String   @id @default(uuid()) @db.Uuid
+  monitorTopicId String   @map("monitor_topic_id") @db.Uuid
+  subtopic       String?
+  subsubtopic    String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  monitorTopic MonitorTopic @relation(fields: [monitorTopicId], references: [id], onDelete: Cascade)
+
+  @@index([monitorTopicId])
+  @@map("monitor_question_bank_selections")
 }
 
 model MonitorDocument {
@@ -562,20 +580,59 @@ model Question {
   createdAt               DateTime                     @default(now()) @map("created_at")
   updatedAt               DateTime                     @updatedAt @map("updated_at")
 
-  teacher          Teacher                  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
-  monitor          Monitor                  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
-  subject          MonitorSubject           @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  topic            MonitorTopic?            @relation(fields: [topicId], references: [id], onDelete: Cascade)
-  sources          QuestionSource[]
-  topicLinks       QuestionTopic[]
-  contentReports   StudentContentReport[]
-  aiGenerations    QuestionAiGeneration[]
-  dailyChallenges  DailyChallenge[]
-  questionAttempts StudentQuestionAttempt[]
+  teacher               Teacher                  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  monitor               Monitor                  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  subject               MonitorSubject           @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  topic                 MonitorTopic?            @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  sources               QuestionSource[]
+  topicLinks            QuestionTopic[]
+  contentReports        StudentContentReport[]
+  aiGenerations         QuestionAiGeneration[]
+  dailyChallenges       DailyChallenge[]
+  questionAttempts      StudentQuestionAttempt[]
+  weeklySimulationItems WeeklySimulationItem[]
 
   @@unique([topicId, textHash])
   @@index([monitorId, subjectId, topicId, status])
   @@map("questions")
+}
+
+model QuestionBankItem {
+  id                   String   @id @default(uuid()) @db.Uuid
+  provider             String
+  providerQuestionId   String   @map("provider_question_id")
+  externalId           String?  @map("external_id")
+  examType             String   @map("exam_type")
+  examName             String   @map("exam_name")
+  board                String?
+  institution          String?
+  examYear             Int?     @map("exam_year")
+  subject              String
+  topic                String
+  subtopic             String?
+  subsubtopic          String?
+  taxonomyPath         Json     @map("taxonomy_path")
+  statementHtml        String   @map("statement_html") @db.Text
+  statementText        String   @map("statement_text") @db.Text
+  alternatives         Json
+  correctAnswer        String   @map("correct_answer")
+  difficulty           String?
+  sourceUrl            String?  @map("source_url") @db.Text
+  imageUrls            Json     @map("image_urls")
+  rawPayload           Json     @map("raw_payload")
+  contentHash          String   @map("content_hash")
+  explanation          String?  @db.Text
+  explanationStatus    String   @default("NOT_REQUESTED") @map("explanation_status")
+  status               String   @default("IMPORTED")
+  sourceFetchedAt      DateTime @map("source_fetched_at")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@unique([provider, providerQuestionId])
+  @@index([examType, board, subject, topic, status])
+  @@index([provider, examYear])
+  @@index([contentHash])
+  @@map("question_bank_items")
 }
 
 model QuestionSpan {
@@ -748,6 +805,69 @@ model FlashcardSource {
   @@map("flashcard_sources")
 }
 
+model WeeklySimulation {
+  id                 String                 @id @default(uuid()) @db.Uuid
+  studentId          String                 @map("student_id") @db.Uuid
+  monitorId          String                 @map("monitor_id") @db.Uuid
+  cycleStartDate     DateTime               @map("cycle_start_date") @db.Date
+  status             WeeklySimulationStatus @default(PENDING)
+  requestedAt        DateTime               @default(now()) @map("requested_at")
+  startedAt          DateTime?              @map("started_at")
+  solvingStartedAt   DateTime?              @map("solving_started_at")
+  deadlineAt         DateTime?              @map("deadline_at")
+  timeLimitSeconds   Int                    @default(3600) @map("time_limit_seconds")
+  completedAt        DateTime?              @map("completed_at")
+  durationSeconds    Int?                   @map("duration_seconds")
+  failedAt           DateTime?              @map("failed_at")
+  generationJobId    String?                @unique @map("generation_job_id")
+  questionCount      Int                    @default(0) @map("question_count")
+  answeredCount      Int                    @default(0) @map("answered_count")
+  correctCount       Int                    @default(0) @map("correct_count")
+  scorePercent       Float?                 @map("score_percent")
+  diagnosticSnapshot Json?                  @map("diagnostic_snapshot")
+  failureCode        String?                @map("failure_code")
+  failureMessage     String?                @map("failure_message")
+  createdAt          DateTime               @default(now()) @map("created_at")
+  updatedAt          DateTime               @updatedAt @map("updated_at")
+
+  student Student                @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  monitor Monitor                @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  items   WeeklySimulationItem[]
+
+  @@unique([studentId, monitorId, cycleStartDate])
+  @@index([studentId, monitorId, status])
+  @@index([monitorId, cycleStartDate])
+  @@map("weekly_simulations")
+}
+
+model WeeklySimulationItem {
+  id                String                  @id @default(uuid()) @db.Uuid
+  simulationId      String                  @map("simulation_id") @db.Uuid
+  questionId        String                  @map("question_id") @db.Uuid
+  position          Int
+  subjectId         String                  @map("subject_id") @db.Uuid
+  topicId           String?                 @map("topic_id") @db.Uuid
+  difficultyScore   Float                   @map("difficulty_score")
+  selectionPriority WeeklySelectionPriority @map("selection_priority")
+  selectionReason   String                  @map("selection_reason")
+  selectedAnswer    String?                 @map("selected_answer")
+  isCorrect         Boolean?                @map("is_correct")
+  responseTimeMs    Int?                    @map("response_time_ms")
+  answeredAt        DateTime?               @map("answered_at")
+  createdAt         DateTime                @default(now()) @map("created_at")
+  updatedAt         DateTime                @updatedAt @map("updated_at")
+
+  simulation      WeeklySimulation        @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+  question        Question                @relation(fields: [questionId], references: [id], onDelete: Restrict)
+  subject         MonitorSubject          @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  topic           MonitorTopic?           @relation(fields: [topicId], references: [id], onDelete: SetNull)
+
+  @@unique([simulationId, questionId])
+  @@unique([simulationId, position])
+  @@index([simulationId, topicId])
+  @@map("weekly_simulation_items")
+}
+
 model DailyChallenge {
   id                String   @id @default(uuid()) @db.Uuid
   monitorId         String   @map("monitor_id") @db.Uuid
@@ -771,29 +891,31 @@ model DailyChallenge {
 }
 
 model StudentQuestionAttempt {
-  id               String                     @id @default(uuid()) @db.Uuid
-  studentId        String                     @map("student_id") @db.Uuid
-  questionId       String                     @map("question_id") @db.Uuid
-  monitorId        String                     @map("monitor_id") @db.Uuid
-  dailyChallengeId String?                    @map("daily_challenge_id") @db.Uuid
+  id               String                       @id @default(uuid()) @db.Uuid
+  studentId        String                       @map("student_id") @db.Uuid
+  questionId       String                       @map("question_id") @db.Uuid
+  monitorId        String                       @map("monitor_id") @db.Uuid
+  dailyChallengeId String?                      @map("daily_challenge_id") @db.Uuid
   mode             StudentQuestionAttemptMode
-  selectedAnswer   String                     @map("selected_answer")
-  isCorrect        Boolean                    @map("is_correct")
-  responseTimeMs   Int?                       @map("response_time_ms")
-  answeredAt       DateTime                   @default(now()) @map("answered_at")
+  status           StudentQuestionAttemptStatus @default(ACTIVE)
+  selectedAnswer   String                       @map("selected_answer")
+  isCorrect        Boolean                      @map("is_correct")
+  responseTimeMs   Int?                         @map("response_time_ms")
+  answeredAt       DateTime                     @default(now()) @map("answered_at")
   metadata         Json?
-  idempotencyKey   String?                    @unique @map("idempotency_key") @db.Uuid
-  createdAt        DateTime                   @default(now()) @map("created_at")
+  idempotencyKey   String?                      @unique @map("idempotency_key") @db.Uuid
+  createdAt        DateTime                     @default(now()) @map("created_at")
 
-  student          Student                @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  question         Question               @relation(fields: [questionId], references: [id], onDelete: Restrict)
-  monitor          Monitor                @relation(fields: [monitorId], references: [id], onDelete: Restrict)
-  dailyChallenge   DailyChallenge?        @relation(fields: [dailyChallengeId], references: [id], onDelete: SetNull)
-  challengeAttempt DailyChallengeAttempt?
+  student              Student                @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  question             Question               @relation(fields: [questionId], references: [id], onDelete: Restrict)
+  monitor              Monitor                @relation(fields: [monitorId], references: [id], onDelete: Restrict)
+  dailyChallenge       DailyChallenge?        @relation(fields: [dailyChallengeId], references: [id], onDelete: SetNull)
+  challengeAttempt     DailyChallengeAttempt?
 
   @@index([studentId, answeredAt])
   @@index([monitorId, answeredAt])
   @@index([questionId, studentId])
+  @@index([studentId, status, answeredAt])
   @@map("student_question_attempts")
 }
 
@@ -935,6 +1057,7 @@ enum QuestionStatus {
   DRAFT
   PENDING_REVIEW
   APPROVED
+  REPORTED
   REJECTED
 }
 
@@ -949,6 +1072,26 @@ enum StudentQuestionAttemptMode {
   PRACTICE
   DAILY_CHALLENGE
   SIMULATED
+}
+
+enum StudentQuestionAttemptStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum WeeklySimulationStatus {
+  PENDING
+  PROCESSING
+  READY
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum WeeklySelectionPriority {
+  NEVER_ANSWERED
+  PREVIOUSLY_INCORRECT
+  PREVIOUSLY_CORRECT
 }
 
 enum QuestionAnswerOrigin {
@@ -1072,6 +1215,7 @@ enum FlashcardGenerationOrigin {
 enum FlashcardStatus {
   PENDING_REVIEW
   APPROVED
+  REPORTED
   REJECTED
 }
 
@@ -1118,6 +1262,7 @@ model Student {
   flashcardProgresses        StudentFlashcardProgress[]
   flashcardReviews           StudentFlashcardReviewLog[]
   contentReports             StudentContentReport[]
+  weeklySimulations          WeeklySimulation[]
 
   @@index([userId])
   @@index([email])

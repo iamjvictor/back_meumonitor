@@ -56,7 +56,7 @@ export class StudentQuestionAttemptRepository {
           subject: { select: { id: true, name: true } },
           topic: { select: { id: true, name: true } },
           questionAttempts: {
-            where: { studentId: input.studentId },
+            where: { studentId: input.studentId, mode: 'PRACTICE', status: 'ACTIVE' },
             orderBy: { answeredAt: 'desc' },
             take: 1,
             select: { id: true, selectedAnswer: true, isCorrect: true, answeredAt: true },
@@ -65,7 +65,34 @@ export class StudentQuestionAttemptRepository {
       }),
       prisma.question.count({ where }),
     ]);
-    return { questions, total };
+
+    const attemptWhere = {
+      studentId: input.studentId,
+      monitorId: { in: monitorIds },
+      mode: 'PRACTICE' as const,
+      ...(input.monitorId ? { monitorId: input.monitorId } : {}),
+      question: {
+        status: 'APPROVED' as const,
+        ...(input.subjectId ? { subjectId: input.subjectId } : {}),
+        ...(input.topicId ? { topicId: input.topicId } : {}),
+      },
+    };
+    const [attemptsCount, correctCount, answeredQuestionIds] = await Promise.all([
+      prisma.studentQuestionAttempt.count({ where: attemptWhere }),
+      prisma.studentQuestionAttempt.count({ where: { ...attemptWhere, isCorrect: true } }),
+      prisma.studentQuestionAttempt.findMany({ where: attemptWhere, distinct: ['questionId'], select: { questionId: true } }),
+    ]);
+
+    return {
+      questions,
+      total,
+      stats: {
+        attemptsCount,
+        correctCount,
+        answeredQuestionsCount: answeredQuestionIds.length,
+        accuracy: attemptsCount > 0 ? Math.round((correctCount / attemptsCount) * 100) : 0,
+      },
+    };
   }
 
   async findApprovedQuestion(questionId: string, monitorIds: string[]) {
@@ -95,6 +122,7 @@ export class StudentQuestionAttemptRepository {
           questionId: input.question.id,
           monitorId: input.question.monitorId,
           mode: 'PRACTICE',
+          status: 'ACTIVE',
           selectedAnswer: input.data.selectedAnswer.trim(),
           isCorrect: Boolean(input.question.correctAnswer && isCorrect),
           responseTimeMs: input.data.responseTimeMs,
@@ -115,5 +143,28 @@ export class StudentQuestionAttemptRepository {
       }
       throw error;
     }
+  }
+
+  async archiveActiveAttempts(input: {
+    studentId: string;
+    monitorIds: string[];
+    monitorId?: string;
+    subjectId?: string;
+    topicId?: string;
+  }) {
+    const result = await prisma.studentQuestionAttempt.updateMany({
+      where: {
+        studentId: input.studentId,
+        status: 'ACTIVE',
+        monitorId: input.monitorId ? { in: [input.monitorId] } : { in: input.monitorIds },
+        question: {
+          ...(input.subjectId ? { subjectId: input.subjectId } : {}),
+          ...(input.topicId ? { topicId: input.topicId } : {}),
+        },
+      },
+      data: { status: 'ARCHIVED' },
+    });
+
+    return result.count;
   }
 }

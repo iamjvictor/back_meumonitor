@@ -6,6 +6,7 @@ import {
   type StudentPerformanceRow,
   type StudentFlashcardPerformanceRow,
 } from '../student-performance.service.js';
+import { StudentPerformanceService } from '../student-performance.service.js';
 
 test('agrupa o desempenho mantendo monitores, matérias e tópicos separados', () => {
   const rows: StudentPerformanceRow[] = [
@@ -74,3 +75,45 @@ test('agrupa o desempenho em flashcards por retenção e ratings', () => {
   assert.equal(result.monitors[0]?.retentionRate, 80);
 });
 
+test('consulta questões, simulados e desafios diários separadamente', async () => {
+  const modes: string[] = [];
+  const row = (mode: string): StudentPerformanceRow[] => mode === 'PRACTICE' ? [{
+    monitorId: 'm1', monitorName: 'Monitor', subjectId: 's1', subjectName: 'Matéria', topicId: null, topicName: null,
+    answeredCount: 2, correctCount: 1, lastAnsweredAt: null,
+  }] : [];
+  const service = new StudentPerformanceService({
+    findStudentByUserId: async () => ({ id: 'student-1' }),
+    aggregateByScope: async (_studentId: string, _monitorIds: string[], mode: string) => { modes.push(mode); return row(mode); },
+    aggregateWeeklySimulationByScope: async () => [],
+    aggregateFlashcardByScope: async () => [],
+    getFlashcardOverview: async () => ({ dueCount: 0, totalCardsCount: 0 }),
+  } as never, { findAccessibleMonitorIds: async () => ['m1'] } as never);
+
+  const result = await service.getForUser('user-1');
+
+  assert.deepEqual(modes.sort(), ['DAILY_CHALLENGE', 'PRACTICE', 'SIMULATED']);
+  assert.equal(result.summary.answeredCount, 2);
+  assert.equal(result.simulados.summary.answeredCount, 0);
+  assert.equal(result.dailyChallenges.summary.answeredCount, 0);
+});
+
+test('inclui respostas dos simulados semanais no desempenho de simulados', async () => {
+  const service = new StudentPerformanceService({
+    findStudentByUserId: async () => ({ id: 'student-1' }),
+    aggregateByScope: async () => [],
+    aggregateWeeklySimulationByScope: async () => [{
+      monitorId: 'm1', monitorName: 'Monitor', subjectId: 's1', subjectName: 'Matéria',
+      topicId: 't1', topicName: 'Tópico', answeredCount: 3, correctCount: 1,
+      lastAnsweredAt: '2026-09-09T20:00:00.000Z',
+    }],
+    aggregateFlashcardByScope: async () => [],
+    getFlashcardOverview: async () => ({ dueCount: 0, totalCardsCount: 0 }),
+  } as never, { findAccessibleMonitorIds: async () => ['m1'] } as never);
+
+  const result = await service.getForUser('user-1');
+
+  assert.deepEqual(result.simulados.summary, {
+    answeredCount: 3, correctCount: 1, incorrectCount: 2, accuracy: 33,
+  });
+  assert.equal(result.simulados.monitors[0]?.subjects[0]?.topics[0]?.name, 'Tópico');
+});

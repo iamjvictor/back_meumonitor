@@ -1,5 +1,5 @@
 import { StudentQuestionAttemptRepository } from '../repositories/student-question-attempt.repository.js';
-import { calculateQuestionCorrectness, type StudentQuestionAttemptInput } from '../models/student-question-attempt.model.js';
+import { calculateQuestionCorrectness, type ResetStudentQuestionAttemptsInput, type StudentQuestionAttemptInput } from '../models/student-question-attempt.model.js';
 
 function log(event: string, data: Record<string, unknown> = {}) { console.log(event, { event, ...data }); }
 
@@ -36,5 +36,21 @@ export class StudentQuestionAttemptService {
       correctAnswer: question.correctAnswer,
       explanation: question.explanation,
     };
+  }
+
+  async reset(userId: string, input: ResetStudentQuestionAttemptsInput) {
+    const student = await this.repository.findStudentByUserId(userId);
+    if (!student) throw new Error('STUDENT_NOT_FOUND');
+
+    const monitorIds = await this.repository.findAccessibleMonitorIds(student.id, userId);
+    if (input.monitorId && !monitorIds.includes(input.monitorId)) throw new Error('MONITOR_NOT_ACCESSIBLE');
+
+    const archivedCount = await this.repository.archiveActiveAttempts({
+      studentId: student.id,
+      monitorIds,
+      ...input,
+    });
+
+    return { archivedCount };
   }
 }

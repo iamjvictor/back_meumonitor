@@ -281,19 +281,25 @@ export class StudentPerformanceService {
     if (!student) throw new Error('STUDENT_NOT_FOUND');
     const monitorIds = await this.accessRepository.findAccessibleMonitorIds(student.id, userId);
 
-    const [rows, flashcardRows, flashcardOverview] = await Promise.all([
-      this.repository.aggregateByScope(student.id, monitorIds),
+    const [questionRows, simulatedAttemptRows, weeklySimulationRows, dailyChallengeRows, flashcardRows, flashcardOverview] = await Promise.all([
+      this.repository.aggregateByScope(student.id, monitorIds, 'PRACTICE'),
+      this.repository.aggregateByScope(student.id, monitorIds, 'SIMULATED'),
+      this.repository.aggregateWeeklySimulationByScope(student.id, monitorIds),
+      this.repository.aggregateByScope(student.id, monitorIds, 'DAILY_CHALLENGE'),
       this.repository.aggregateFlashcardByScope(student.id, monitorIds),
       this.repository.getFlashcardOverview(student.id, monitorIds),
     ]);
 
-    const questionsPerformance = buildPerformanceResponse(rows);
+    const questionsPerformance = buildPerformanceResponse(questionRows);
+    const simulatedPerformance = buildPerformanceResponse([...simulatedAttemptRows, ...weeklySimulationRows]);
+    const dailyChallengePerformance = buildPerformanceResponse(dailyChallengeRows);
     const flashcardsPerformance = buildFlashcardsPerformanceResponse(flashcardRows, flashcardOverview);
 
     return {
       ...questionsPerformance,
+      simulados: simulatedPerformance,
+      dailyChallenges: dailyChallengePerformance,
       flashcards: flashcardsPerformance,
     };
   }
 }
-

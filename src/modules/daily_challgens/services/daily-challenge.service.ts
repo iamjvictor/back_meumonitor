@@ -94,8 +94,35 @@ export class DailyChallengeService {
     return { alreadyAnswered: false, isCorrect: result.attempt.isCorrect, correctAnswer: result.challenge.question.correctAnswer, questionAttemptId: result.attempt.questionAttemptId, explanation: result.challenge.question.explanation };
   }
 
-  async getRanking(userId: string, monitorId: string, start: Date, end: Date) {
+  async getRanking(userId: string, monitorId: string, start?: Date, end?: Date, period?: 'week' | 'month' | 'all') {
+    const isOwner = Boolean(await this.repository.isMonitorOwner?.(userId, monitorId));
+    if (isOwner) {
+      return this.rankingRepository.getRanking(monitorId, start, end, undefined, period);
+    }
     const student = await this.resolveAccess(userId, monitorId);
-    return this.rankingRepository.getRanking(monitorId, start, end, student.id);
+    return this.rankingRepository.getRanking(monitorId, start, end, student.id, period);
+  }
+
+  async getDashboardSummary(userId: string, now = new Date()) {
+    const student = await this.repository.findStudentByUserId(userId);
+    if (!student) throw new Error('STUDENT_NOT_FOUND');
+    const monitorIds = await this.repository.findActiveEnrollmentMonitorIds(student.id);
+    const dateKey = (date: Date) => new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(date);
+    const shiftDate = (value: string, amount: number) => {
+      const date = new Date(`${value}T12:00:00-03:00`);
+      date.setUTCDate(date.getUTCDate() + amount);
+      return dateKey(date);
+    };
+    const today = dateKey(now);
+    const dayKeys = Array.from({ length: 7 }, (_, index) => shiftDate(today, index - 6));
+    const month = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit' }).format(now);
+    const [year = now.getUTCFullYear(), numericMonth = now.getUTCMonth() + 1] = month.split('-').map(Number);
+    const rankingStart = new Date(Date.UTC(year, numericMonth - 1, 1, 3));
+    const rankingEnd = new Date(Date.UTC(year, numericMonth, 1, 3));
+    const daysStart = new Date(`${dayKeys[0]}T03:00:00.000Z`);
+    const daysEnd = new Date(`${shiftDate(today, 1)}T03:00:00.000Z`);
+    return this.rankingRepository.getDashboardSummary({ monitorIds, rankingStart, rankingEnd, daysStart, daysEnd, dayKeys, currentStudentId: student.id });
   }
 }

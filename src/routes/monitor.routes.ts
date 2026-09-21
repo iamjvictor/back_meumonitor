@@ -8,6 +8,7 @@ export async function monitorRoutes(app: FastifyInstance) {
   const controller = new MonitorController(new MonitorService(new MonitorRepository()));
 
   app.get('/', { onRequest: authMiddleware }, controller.listMine.bind(controller));
+  app.get('/question-bank-catalog', { onRequest: authMiddleware }, controller.getQuestionBankCatalog.bind(controller));
   app.get<{ Params: { monitorId: string } }>('/:monitorId', { onRequest: authMiddleware }, controller.getMine.bind(controller));
   app.patch<{ Params: { monitorId: string }; Body: { name?: string; description?: string | null } }>('/:monitorId', { onRequest: authMiddleware }, controller.update.bind(controller));
   app.post('/', {

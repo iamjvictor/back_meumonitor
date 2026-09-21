@@ -1,0 +1,3 @@
+ALTER TYPE "QuestionStatus" ADD VALUE 'REPORTED';
+
+ALTER TYPE "FlashcardStatus" ADD VALUE 'REPORTED';

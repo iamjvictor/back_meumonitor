@@ -38,3 +38,43 @@ test('registra a tentativa sem fazer lookup antecipado de idempotência', async 
   assert.equal(result.correctAnswer, 'A');
   assert.equal(result.explanation, 'A alternativa A está correta.');
 });
+
+test('reseta o escopo arquivando tentativas sem excluí-las', async () => {
+  let resetInput: unknown;
+  const repository = {
+    findStudentByUserId: async () => ({ id: 'student-1' }),
+    findAccessibleMonitorIds: async () => ['monitor-1', 'monitor-2'],
+    archiveActiveAttempts: async (input: unknown) => {
+      resetInput = input;
+      return 3;
+    },
+  } as unknown as StudentQuestionAttemptRepository;
+
+  const result = await new StudentQuestionAttemptService(repository).reset('user-1', {
+    monitorId: 'monitor-1',
+    subjectId: 'subject-1',
+    topicId: 'topic-1',
+  });
+
+  assert.equal(result.archivedCount, 3);
+  assert.deepEqual(resetInput, {
+    studentId: 'student-1',
+    monitorId: 'monitor-1',
+    subjectId: 'subject-1',
+    topicId: 'topic-1',
+    monitorIds: ['monitor-1', 'monitor-2'],
+  });
+});
+
+test('não permite resetar um monitor ao qual o aluno não tem acesso', async () => {
+  const repository = {
+    findStudentByUserId: async () => ({ id: 'student-1' }),
+    findAccessibleMonitorIds: async () => ['monitor-1'],
+    archiveActiveAttempts: async () => 0,
+  } as unknown as StudentQuestionAttemptRepository;
+
+  await assert.rejects(
+    () => new StudentQuestionAttemptService(repository).reset('user-1', { monitorId: 'monitor-2' }),
+    /MONITOR_NOT_ACCESSIBLE/,
+  );
+});

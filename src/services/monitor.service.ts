@@ -52,4 +52,8 @@ export class MonitorService {
   ) {
     return this.repository.update(userId, monitorId, data);
   }
+
+  async getQuestionBankCatalog() {
+    return this.repository.getQuestionBankCatalog();
+  }
 }

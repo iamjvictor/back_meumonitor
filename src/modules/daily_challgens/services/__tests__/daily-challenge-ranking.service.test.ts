@@ -53,3 +53,23 @@ test('ranking keeps the authenticated student position when it is outside the re
   assert.equal(result.currentStudent.rank, 9);
   assert.equal(result.currentStudent.studentId, 'student-9');
 });
+
+test('ranking allows teacher owner to fetch ranking without student profile or enrollment', async () => {
+  const service = new DailyChallengeService({
+    isMonitorOwner: async (userId: string, monitorId: string) => userId === 'teacher-1' && monitorId === 'monitor-1',
+    findStudentByUserId: async () => null,
+    findActiveEnrollment: async () => null,
+  } as never, {
+    getRanking: async (monitorId: string) => ({
+      ranking: [
+        { rank: 1, studentId: 'student-1', fullName: 'Aluno Um', score: 300, correctAnswers: 3, totalAnswered: 4, accuracy: 75, streakDays: 2 },
+      ],
+      currentStudent: null,
+    }),
+  } as never);
+
+  const result = await service.getRanking('teacher-1', 'monitor-1', new Date('2026-09-01T03:00:00Z'), new Date('2026-10-01T03:00:00Z'));
+  assert.equal(result.ranking.length, 1);
+  assert.equal(result.ranking[0]?.studentId, 'student-1');
+});
+

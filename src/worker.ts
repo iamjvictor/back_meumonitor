@@ -6,6 +6,8 @@ import { DOCUMENT_QUEUE_NAME, type DocumentJob } from './queues/document.queue.j
 import { markDocumentFailed } from './repositories/document-worker.repository.js';
 import { DocumentWorkerService } from './worker/services/document-worker.service.js';
 import { startDailyChallengeScheduler } from './modules/daily_challgens/services/daily-challenge-scheduler.service.js';
+import { WEEKLY_SIMULATION_QUEUE_NAME, type WeeklySimulationJob } from './queues/weekly-simulation.queue.js';
+import { WeeklySimulationWorkerService } from './modules/weekly-simulations/services/weekly-simulation-worker.service.js';
 
 const [questionGenerationEnumState] = await prisma.$queryRaw<Array<{ hasCorrection: boolean; hasNormalization: boolean }>>`
   SELECT EXISTS (
@@ -31,6 +33,7 @@ if (!questionGenerationEnumState?.hasCorrection || !questionGenerationEnumState.
 const redisConnection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
 const workerService = new DocumentWorkerService();
 const dailyChallengeScheduler = startDailyChallengeScheduler();
+const weeklySimulationWorkerService = new WeeklySimulationWorkerService();
 
 const worker = new Worker<DocumentJob>(
   DOCUMENT_QUEUE_NAME,
@@ -40,6 +43,15 @@ const worker = new Worker<DocumentJob>(
   }),
   { connection: redisConnection, concurrency: 2 },
 );
+
+const weeklySimulationWorker = new Worker<WeeklySimulationJob>(
+  WEEKLY_SIMULATION_QUEUE_NAME,
+  async (job) => weeklySimulationWorkerService.process(job.data.simulationId),
+  { connection: redisConnection, concurrency: 2 },
+);
+
+weeklySimulationWorker.on('active', (job) => console.info('[weekly-simulation]', { event: 'weekly_simulation.worker_job_active', jobId: job.id, simulationId: job.data.simulationId }));
+weeklySimulationWorker.on('stalled', (jobId) => console.warn('[weekly-simulation]', { event: 'weekly_simulation.worker_job_stalled', jobId }));
 
 worker.on('ready', () => {
   console.log('Worker de documentos conectado ao Redis', {
@@ -75,10 +87,27 @@ worker.on('error', (error) => {
   console.log('Erro no worker de documentos', { event: 'monitor.document_worker_error', error });
 });
 
+weeklySimulationWorker.on('ready', () => {
+  console.log('Worker de simulados semanais conectado ao Redis', { event: 'monitor.weekly_simulation_worker_ready', queue: WEEKLY_SIMULATION_QUEUE_NAME, concurrency: 2 });
+});
+
+weeklySimulationWorker.on('completed', (job) => {
+  console.log('Job de simulado semanal concluído', { event: 'monitor.weekly_simulation_job_completed', jobId: job.id, simulationId: job.data.simulationId });
+});
+
+weeklySimulationWorker.on('failed', (job, error) => {
+  console.log('Job de simulado semanal falhou', { event: 'monitor.weekly_simulation_job_failed', jobId: job?.id, simulationId: job?.data.simulationId, attemptsMade: job?.attemptsMade, error: error.message });
+});
+
+weeklySimulationWorker.on('error', (error) => {
+  console.log('Erro no worker de simulados semanais', { event: 'monitor.weekly_simulation_worker_error', error: error.message });
+});
+
 const shutdown = async (signal: string) => {
   console.log('Encerramento do worker solicitado', { event: 'monitor.document_worker_shutdown', signal });
   dailyChallengeScheduler.stop();
   await worker.close();
+  await weeklySimulationWorker.close();
   await redisConnection.quit();
   await prisma.$disconnect();
   process.exit(0);

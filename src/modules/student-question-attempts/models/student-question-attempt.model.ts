@@ -10,6 +10,14 @@ export const studentQuestionAttemptSchema = z.object({
 
 export type StudentQuestionAttemptInput = z.infer<typeof studentQuestionAttemptSchema>;
 
+export const resetStudentQuestionAttemptsSchema = z.object({
+  monitorId: z.string().uuid().optional(),
+  subjectId: z.string().uuid().optional(),
+  topicId: z.string().uuid().optional(),
+});
+
+export type ResetStudentQuestionAttemptsInput = z.infer<typeof resetStudentQuestionAttemptsSchema>;
+
 export function calculateQuestionCorrectness(selectedAnswer: string, correctAnswer: string | null | undefined) {
   const selected = selectedAnswer.trim().toUpperCase();
   const correct = correctAnswer?.trim().toUpperCase();

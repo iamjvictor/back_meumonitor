@@ -6,7 +6,7 @@ import type { StudentFlashcardsController } from './student-flashcards.controlle
 import { AppError } from '../../core/errors/app-error.js';
 
 const paramsSchema = z.object({ flashcardId: z.string().min(1) });
-const randomQuerySchema = z.object({ monitorId: z.string().min(1).optional(), excludeFlashcardId: z.string().min(1).optional() });
+const randomQuerySchema = z.object({ monitorId: z.string().min(1).optional(), subjectId: z.string().min(1).optional(), topicId: z.string().min(1).optional(), excludeFlashcardId: z.string().min(1).optional() });
 const bodySchema = z.object({ rating: z.enum(['AGAIN', 'HARD', 'GOOD', 'EASY']) }).strict();
 
 export async function studentFlashcardsRoutes(app: FastifyInstance, controller: StudentFlashcardsController) {

@@ -18,6 +18,7 @@ import { registerDailyChallgensModule } from './modules/daily_challgens/daily-ch
 import { studentQuestionAttemptRoutes } from './modules/student-question-attempts/routes/student-question-attempt.routes.js';
 import { studentConsistencyRoutes } from './modules/student-consistency/routes/student-consistency.routes.js';
 import { studentPerformanceRoutes } from './modules/student-performance/routes/student-performance.routes.js';
+import { studentExperienceRoutes } from './modules/student-experience/routes/student-experience.routes.js';
 import { chatRoutes } from './modules/chat/chat.routes.js';
 import { studentContentReportRoutes } from './modules/student-content-report/routes/student-content-report.routes.js';
 import { createStudentProfileModule } from './modules/student-profile/student-profile.module.js';
@@ -26,6 +27,7 @@ import { createStudentAccessModule } from './modules/student-access/student-acce
 import { studentAccessRoutes } from './modules/student-access/student-access.routes.js';
 import { createStudentFlashcardsModule } from './modules/student-flashcards/student-flashcards.module.js';
 import { studentFlashcardsRoutes } from './modules/student-flashcards/student-flashcards.routes.js';
+import { registerWeeklySimulationModule } from './modules/weekly-simulations/weekly-simulations.module.js';
 import { createErrorHandler } from './core/errors/error-handler.js';
 
 // Railway terminates HTTPS at the public edge; the Node process listens on HTTP internally.
@@ -81,6 +83,7 @@ const studentAccessModule = createStudentAccessModule();
 await app.register(async (accessApp) => studentAccessRoutes(accessApp, studentAccessModule.controller), { prefix: '/api/v1' });
 const studentFlashcardsModule = createStudentFlashcardsModule({ access: studentAccessModule.service });
 await app.register(async (flashcardsApp) => studentFlashcardsRoutes(flashcardsApp, studentFlashcardsModule.controller), { prefix: '/api/v1' });
+await app.register(async (simulationApp) => registerWeeklySimulationModule(simulationApp, studentAccessModule.repository), { prefix: '/api/v1/student' });
 await app.register(teacherRoutes, { prefix: '/api/v1/teachers' });
 await app.register(profileImageRoutes, { prefix: '/api/v1/teachers' });
 await app.register(profileImageRoutes, { prefix: '/api/v1/student' });
@@ -94,6 +97,7 @@ await app.register(registerDailyChallgensModule, { prefix: '/api/v1/student' });
 await app.register(studentQuestionAttemptRoutes, { prefix: '/api/v1/student' });
 await app.register(studentConsistencyRoutes, { prefix: '/api/v1/student' });
 await app.register(studentPerformanceRoutes, { prefix: '/api/v1/student' });
+await app.register(studentExperienceRoutes, { prefix: '/api/v1/student' });
 await app.register(chatRoutes, { prefix: '/api/v1' });
 await app.register(studentContentReportRoutes, { prefix: '/api/v1/student' });
 
