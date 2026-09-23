@@ -20,7 +20,18 @@ function log(event: string, data: Record<string, unknown> = {}) {
 export class StudentPurchaseRepository {
   async findStudentByUserId(userId: string) { const result = await prisma.student.findUnique({ where: { userId }, select: { id: true } }); log('monitor.student_purchase_db_student_lookup_completed', { userId, found: Boolean(result), studentId: result?.id }); return result; }
   async findPublishedMonitors(ids: string[]) { const result = await prisma.monitor.findMany({ where: { id: { in: ids }, status: 'PUBLISHED' }, select: { id: true, name: true } }); log('monitor.student_purchase_db_monitors_lookup_completed', { requestedCount: ids.length, foundCount: result.length }); return result; }
-  async findActiveSubscriptions(studentId: string, ids: string[]) { const result = await prisma.studentSubscription.findMany({ where: { studentId, monitorId: { in: ids }, status: 'active' }, select: { monitorId: true } }); log('monitor.student_purchase_db_active_subscriptions_lookup_completed', { studentId, monitorCount: ids.length, activeCount: result.length }); return result; }
+  async findActiveSubscriptions(studentId: string, ids: string[]) {
+    const [legacy, billing] = await Promise.all([
+      prisma.studentSubscription.findMany({ where: { studentId, monitorId: { in: ids }, status: 'active' }, select: { monitorId: true } }),
+      prisma.billingSubscriptionItem.findMany({
+        where: { monitorId: { in: ids }, status: 'ACTIVE', subscription: { studentId, status: { in: ['ACTIVE', 'TRIALING'] } } },
+        select: { monitorId: true },
+      }),
+    ]);
+    const result = Array.from(new Map([...legacy, ...billing].map((item) => [item.monitorId, item])).values());
+    log('monitor.student_purchase_db_active_subscriptions_lookup_completed', { studentId, monitorCount: ids.length, legacyCount: legacy.length, billingCount: billing.length, activeCount: result.length });
+    return result;
+  }
   async findPurchaseByIdempotencyKey(key: string) { const result = await prisma.studentPurchase.findUnique({ where: { idempotencyKey: key }, include: { items: true } }); log('monitor.student_purchase_db_idempotency_lookup_completed', { found: Boolean(result), purchaseId: result?.id }); return result; }
   async createPurchase(data: StudentPurchaseCreateData) { log('monitor.student_purchase_db_create_started', { studentId: data.studentId, itemCount: data.items.create.length, totalAmount: data.totalAmount }); const result = await prisma.studentPurchase.create({ data: data as unknown as Prisma.StudentPurchaseCreateArgs['data'], include: { items: true } }); log('monitor.student_purchase_db_create_completed', { purchaseId: result.id, status: result.status }); return result; }
   findPurchaseForStudent(id: string, studentId: string) { return prisma.studentPurchase.findFirst({ where: { id, studentId }, include: { items: true } }); }

@@ -43,6 +43,8 @@
     "prisma:validate": "prisma validate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy"
+    ,"asaas:webhook:register": "node --import tsx src/scripts/register-asaas-webhook.ts"
+    ,"asaas:webhook:update": "node --import tsx src/scripts/update-asaas-webhook.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

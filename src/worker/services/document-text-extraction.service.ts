@@ -3,6 +3,7 @@ import {
 } from '../../repositories/document-worker.repository.js';
 import {
   findRepeatedPageLines,
+  removeNullCharacters,
   TextNormalizationService,
 } from './text-normalization.service.js';
 
@@ -102,9 +103,17 @@ export class DocumentTextExtractionService {
     documentSizeBytes: number,
   ): Promise<DocumentTextExtractionResult> {
     const startedAt = Date.now();
-    const rawContent = parsedPdf.text ?? '';
-    const pages = parsedPdf.pages ?? [];
-    const qualityResult = assessQuality(parsedPdf, documentSizeBytes);
+    const sanitizedParsedPdf: ParsedPdfText = {
+      ...parsedPdf,
+      text: removeNullCharacters(parsedPdf.text ?? ''),
+      pages: (parsedPdf.pages ?? []).map((page) => ({
+        ...page,
+        text: removeNullCharacters(page.text),
+      })),
+    };
+    const rawContent = sanitizedParsedPdf.text;
+    const pages = sanitizedParsedPdf.pages;
+    const qualityResult = assessQuality(sanitizedParsedPdf, documentSizeBytes);
     const repeatedPageLines = findRepeatedPageLines(pages.map((page) => page.text));
     const normalizedPages = (qualityResult.quality === 'GOOD' || qualityResult.quality === 'PARTIAL')
       ? pages.map((page) => ({

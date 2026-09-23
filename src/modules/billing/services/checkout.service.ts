@@ -8,7 +8,9 @@ import { AppError } from '../../../core/errors/app-error.js';
 
 type Config = { simulationEnabled: boolean; testPriceCents: number };
 type CustomerRepo = { findStudentByUserId(userId: string): Promise<{ id: string; email: string } | null>; upsert(data: { studentId: string; provider: string; providerCustomerId: string }): Promise<unknown> };
-type CheckoutRepository = Omit<ConstructorParameters<typeof StudentPurchaseService>[0], 'createPurchase'> & { createPurchase(data: StudentPurchaseCreateData): Promise<PurchaseResult> };
+type CheckoutRepository = Omit<ConstructorParameters<typeof StudentPurchaseService>[0], 'createPurchase'> & {
+  createPurchase(data: StudentPurchaseCreateData): Promise<PurchaseResult>;
+};
 
 function log(event: string, data: Record<string, unknown> = {}) { console.log(event, { event, ...data }); }
 

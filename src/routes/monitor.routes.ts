@@ -11,6 +11,7 @@ export async function monitorRoutes(app: FastifyInstance) {
   app.get('/question-bank-catalog', { onRequest: authMiddleware }, controller.getQuestionBankCatalog.bind(controller));
   app.get<{ Params: { monitorId: string } }>('/:monitorId', { onRequest: authMiddleware }, controller.getMine.bind(controller));
   app.patch<{ Params: { monitorId: string }; Body: { name?: string; description?: string | null } }>('/:monitorId', { onRequest: authMiddleware }, controller.update.bind(controller));
+  app.patch<{ Params: { monitorId: string }; Body: { allowPublishWithoutPaymentAccount: boolean } }>('/:monitorId/publication-exception', { onRequest: authMiddleware }, controller.setPublicationException.bind(controller));
   app.post('/', {
     onRequest: authMiddleware,
     config: { rateLimit: { max: 10, timeWindow: '15 minutes' } },

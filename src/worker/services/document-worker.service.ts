@@ -20,7 +20,11 @@ import { FlashcardGenerationService } from './flashcard/flashcard-generation.ser
 import { QuestionExtractionService } from './question-extraction.service.js';
 import { TopicProfileGenerationService } from './topic-profile-generation.service.js';
 import { extractPdfPagesWithLayout } from './pdf-layout-extraction.service.js';
-import { appendProcessingTimeReport, formatDuration } from './processing-time-report.service.js';
+import {
+  appendProcessingStageReport,
+  appendProcessingTimeReport,
+  formatDuration,
+} from './processing-time-report.service.js';
 import {
   createDocumentIngestionV3Service,
   type DocumentIngestionV3Service,
@@ -201,7 +205,13 @@ export class DocumentWorkerService {
     }
 
     try {
-      const { data, error } = await supabaseAdmin.storage.from(BUCKET).download(document.storagePath);
+      const { data, error } = await this.measureStage(
+        document.id,
+        'DOWNLOAD_DOCUMENT',
+        () => supabaseAdmin.storage.from(BUCKET).download(document.storagePath),
+        context,
+        { storagePath: document.storagePath },
+      );
       if (error || !data) throw new Error(error?.message || 'Arquivo nao encontrado no storage.');
       const pdfBytes = new Uint8Array(await data.arrayBuffer());
       const contentHash = createHash('sha256').update(pdfBytes).digest('hex');
@@ -214,20 +224,26 @@ export class DocumentWorkerService {
             parser: 'DOCLING',
             sizeBytes: pdfBytes.byteLength,
           });
-          const v3Result = await this.documentIngestionV3Service.processDocument({
-            documentId: document.id,
-            storagePath: document.storagePath,
-            originalName: document.originalName,
-            mimeType: document.mimeType,
-            sizeBytes: document.sizeBytes,
-            contentHash,
-            fileBytes: pdfBytes,
-            backend: 'pipeline',
-            parserVersion: 'docling-v3',
-            modelVersion: 'docling-layout-v3',
-            configurationHash: `worker:${DOCUMENT_PROCESSING_VERSION}`,
-            schemaVersion: 'layout-v1',
-          });
+          const v3Result = await this.measureStage(
+            document.id,
+            'PARSE_DOCLING',
+            () => this.documentIngestionV3Service!.processDocument({
+              documentId: document.id,
+              storagePath: document.storagePath,
+              originalName: document.originalName,
+              mimeType: document.mimeType,
+              sizeBytes: document.sizeBytes,
+              contentHash,
+              fileBytes: pdfBytes,
+              backend: 'pipeline',
+              parserVersion: 'docling-v3',
+              modelVersion: 'docling-layout-v3',
+              configurationHash: `worker:${DOCUMENT_PROCESSING_VERSION}`,
+              schemaVersion: 'layout-v1',
+            }),
+            context,
+            { parser: 'DOCLING', sizeBytes: pdfBytes.byteLength },
+          );
           console.log('Shadow parser V3 executado', {
             event: 'monitor.document_ingestion_v3_shadow_completed',
             documentId: document.id,
@@ -366,9 +382,21 @@ export class DocumentWorkerService {
         if (document.tag === 'KNOWLEDGE_BASE') {
           try {
             if (document.topicId) {
-              await this.topicProfileGenerationService.processTopic(document.topicId);
+              await this.measureStage(
+                document.id,
+                'GENERATE_TOPIC_PROFILE',
+                () => this.topicProfileGenerationService.processTopic(document.topicId!),
+                context,
+                { profileScope: 'TOPIC' },
+              );
             } else {
-              await this.topicProfileGenerationService.processSubject(document.subjectId);
+              await this.measureStage(
+                document.id,
+                'GENERATE_TOPIC_PROFILE',
+                () => this.topicProfileGenerationService.processSubject(document.subjectId),
+                context,
+                { profileScope: 'SUBJECT' },
+              );
             }
           } catch (error) {
             console.log('Perfil do topico nao foi gerado; processamento continuara', {
@@ -531,31 +559,123 @@ export class DocumentWorkerService {
     try {
       const result = await action();
       const outputSummary = sanitizeFlashcardOutputSummary(result);
-      outputSummary.durationMs = Date.now() - startedAt;
+      const finishedAt = Date.now();
+      outputSummary.durationMs = finishedAt - startedAt;
       const operationStatus = resolveTrackedOperationStatus(result);
       if (operationStatus === 'FAILED' || operationStatus === 'PARTIAL_SUCCESS') {
         outputSummary.status = operationStatus;
         if (operationStatus === 'FAILED') {
           await failDocumentProcessingJob(documentId, operation, new Error('Falha total na geracao de flashcards.'), outputSummary);
+          await appendProcessingStageReport({
+            documentId,
+            stage: operation,
+            status: 'FAILED',
+            startedAt: new Date(startedAt).toISOString(),
+            finishedAt: new Date(finishedAt).toISOString(),
+            durationMs: finishedAt - startedAt,
+            attempt: context.attempt,
+            jobId: context.jobId,
+            details: stageDetails(outputSummary),
+            error: 'Falha total na geracao de flashcards.',
+          });
           return result;
         }
       }
       await completeDocumentProcessingJob(documentId, operation, {
         ...outputSummary,
       }, operationStatus === 'PARTIAL_SUCCESS' ? 'PARTIAL_SUCCESS' : 'READY');
+      await appendProcessingStageReport({
+        documentId,
+        stage: operation,
+        status: operationStatus === 'PARTIAL_SUCCESS' ? 'PARTIAL_SUCCESS' : 'READY',
+        startedAt: new Date(startedAt).toISOString(),
+        finishedAt: new Date(finishedAt).toISOString(),
+        durationMs: outputSummary.durationMs as number,
+        attempt: context.attempt,
+        jobId: context.jobId,
+        details: stageDetails(outputSummary),
+      });
       return result;
     } catch (error) {
       await failDocumentProcessingJob(documentId, operation, error);
+      const finishedAt = Date.now();
       console.log('Operacao de processamento falhou', {
         event: 'monitor.document_processing_operation_failed',
         documentId,
         operation,
         jobId: context.jobId,
         attempt: context.attempt,
-        durationMs: Date.now() - startedAt,
+        durationMs: finishedAt - startedAt,
         error,
+      });
+      await appendProcessingStageReport({
+        documentId,
+        stage: operation,
+        status: 'FAILED',
+        startedAt: new Date(startedAt).toISOString(),
+        finishedAt: new Date(finishedAt).toISOString(),
+        durationMs: finishedAt - startedAt,
+        attempt: context.attempt,
+        jobId: context.jobId,
+        error: error instanceof Error ? error.message : String(error),
       });
       throw error;
     }
   }
+
+  private async measureStage<T>(
+    documentId: string,
+    stage: string,
+    action: () => Promise<T>,
+    context: DocumentWorkerContext,
+    details?: Record<string, string | number | boolean | null>,
+  ) {
+    const startedAt = Date.now();
+    try {
+      const result = await action();
+      const finishedAt = Date.now();
+      await appendProcessingStageReport({
+        documentId,
+        stage,
+        status: 'READY',
+        startedAt: new Date(startedAt).toISOString(),
+        finishedAt: new Date(finishedAt).toISOString(),
+        durationMs: finishedAt - startedAt,
+        attempt: context.attempt,
+        jobId: context.jobId,
+        details,
+      });
+      return result;
+    } catch (error) {
+      const finishedAt = Date.now();
+      await appendProcessingStageReport({
+        documentId,
+        stage,
+        status: 'FAILED',
+        startedAt: new Date(startedAt).toISOString(),
+        finishedAt: new Date(finishedAt).toISOString(),
+        durationMs: finishedAt - startedAt,
+        attempt: context.attempt,
+        jobId: context.jobId,
+        details,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+}
+
+function stageDetails(summary: Record<string, Prisma.InputJsonValue>) {
+  const allowedKeys = [
+    'chunkCount', 'batchCount', 'blockCount', 'questionCount', 'savedCount',
+    'duplicateCount', 'candidateCount', 'status',
+  ] as const;
+  const details: Record<string, string | number | boolean | null> = {};
+  for (const key of allowedKeys) {
+    const value = summary[key];
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === null) {
+      details[key] = value;
+    }
+  }
+  return details;
 }

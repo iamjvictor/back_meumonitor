@@ -33,6 +33,20 @@ test('autoriza matrícula ativa quando não há assinatura', async () => {
   assert.ok(await repository.resolveChatScope({ userId: 'user-1', monitorId: 'monitor-1', subjectId: 'subject-1' }));
 });
 
+test('autoriza professor no modo preview quando a matéria pertence ao seu monitor', async () => {
+  const repository = new PrismaChatAccessRepository(makeClient({
+    student: { findUnique: async () => null },
+    teacher: { findUnique: async () => ({ id: 'teacher-1' }) },
+    studentSubscription: { findFirst: async () => null },
+    studentEnrollment: { findFirst: async () => null },
+  }));
+
+  assert.deepEqual(
+    await repository.resolveChatScope({ userId: 'teacher-user-1', monitorId: 'monitor-1', subjectId: 'subject-1' }),
+    { studentId: 'teacher-preview:teacher-user-1', teacherId: 'teacher-1', monitorId: 'monitor-1', subjectId: 'subject-1' },
+  );
+});
+
 test('nega quando o aluno não existe ou a matéria não pertence ao monitor', async () => {
   const noStudent = new PrismaChatAccessRepository(makeClient({ student: { findUnique: async () => null } }));
   const noSubject = new PrismaChatAccessRepository(makeClient({ monitorSubject: { findFirst: async () => null } }));

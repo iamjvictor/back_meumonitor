@@ -53,6 +53,7 @@ export class StudentQuestionAttemptRepository {
           alternatives: true,
           kind: true,
           difficulty: true,
+          questionBankItem: { select: { imageUrls: true } },
           subject: { select: { id: true, name: true } },
           topic: { select: { id: true, name: true } },
           questionAttempts: {

@@ -89,3 +89,11 @@ test('chave usada por outro aluno é rejeitada', async () => {
   const { service } = setup({ id: 'purchase-other', studentId: 'student-2', status: 'PENDING' });
   await assert.rejects(() => service.createCheckout('user-1', { monitorIds: ids, paymentMethod: 'PIX', interval: 'MONTH' }, 'key-1'), { message: 'IDEMPOTENCY_KEY_REUSED' });
 });
+
+test('permite comprar outro monitor quando o aluno já possui assinatura agregada ativa', async () => {
+  const { service, calls } = setup();
+
+  const result = await service.createCheckout('user-1', { monitorIds: [ids[1]!], paymentMethod: 'PIX', interval: 'MONTH' }, 'key-active');
+  assert.equal(result.purchaseId, 'purchase-1');
+  assert.equal(calls.createPurchase, 1);
+});

@@ -16,7 +16,7 @@ const fetchMock: typeof fetch = async (input, init) => {
       status: 'PROCESSING',
       statusUrl: 'http://parser.test/v1/parse/parse-run-1',
       resultUrl: 'http://parser.test/v1/parse/parse-run-1/result',
-      idempotencyKey: 'hash-1:MINERU:unknown-parser-version:pipeline:unknown-model-version:config-1:unknown-schema-version',
+      idempotencyKey: 'doc-1:hash-1:MINERU:unknown-parser-version:pipeline:unknown-model-version:config-1:unknown-schema-version',
     }), { status: 202, headers: { 'content-type': 'application/json' } });
   }
 

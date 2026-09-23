@@ -17,6 +17,7 @@ function setBackendEnv() {
 test('FLASHCARDS executa o job de geração após os embeddings e mantém questões em skip', async (t) => {
   setBackendEnv();
   const jobs: Array<{ action: 'start' | 'complete' | 'skip'; operation: string; summary?: unknown; status?: string }> = [];
+  const stageReports: string[] = [];
   let flashcardCalls = 0;
   let questionCalls = 0;
   const order: string[] = [];
@@ -80,6 +81,7 @@ test('FLASHCARDS executa o job de geração após os embeddings e mantém quest�
   await t.mock.module('../processing-time-report.service.js', {
     namedExports: {
       async appendProcessingTimeReport() {},
+      async appendProcessingStageReport(timing: { stage: string }) { stageReports.push(timing.stage); },
       formatDuration() { return '0s'; },
     },
   });
@@ -133,6 +135,10 @@ test('FLASHCARDS executa o job de geração após os embeddings e mantém quest�
   assert.equal(summary.failedChunks, 1);
   assert.deepEqual(summary.failedChunksDetail, [{ chunkId: 'chunk-1', code: 'PROVIDER_ERROR' }]);
   assert.equal(flashcardJob[1]?.status, 'PARTIAL_SUCCESS');
+  assert.ok(stageReports.includes('DOWNLOAD_DOCUMENT'));
+  assert.ok(stageReports.includes('PARSE_DOCLING'));
+  assert.ok(stageReports.includes('GENERATE_CHUNK_EMBEDDINGS'));
+  assert.ok(stageReports.includes('GENERATE_FLASHCARD_CANDIDATES'));
 });
 
 test('worker status and resumo de flashcards rejeitam FAILED e payloads sensíveis', async () => {

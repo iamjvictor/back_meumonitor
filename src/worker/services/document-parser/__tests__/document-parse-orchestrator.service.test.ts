@@ -128,7 +128,7 @@ test('não reutiliza COMPLETED quando parser metadata muda na chave de idempotê
 
   assert.equal(parseCalls, 1);
   assert.equal(record.parseRunId, 'parse-run-new');
-  assert.equal(record.idempotencyKey, 'hash-1:MINERU:3.4.5:pipeline:layout-model-2:cfg-1:layout-v1');
+  assert.equal(record.idempotencyKey, 'document-1:hash-1:MINERU:3.4.5:pipeline:layout-model-2:cfg-1:layout-v1');
 });
 
 test('fallback usa UUID persistível e preserva a causa original do parser', async () => {

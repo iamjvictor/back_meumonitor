@@ -1,12 +1,45 @@
 import { prisma } from '../lib/prisma.js';
 import type { CreateMonitorInput } from '../models/monitor.model.js';
+import {
+  buildMonitorTopicName,
+  buildMonitorTopicHierarchy,
+  normalizeQuestionBankSelection,
+  normalizeTaxonomyName,
+} from '../modules/question-bank/services/question-bank-selection.service.js';
+import {
+  canPublishMonitor,
+  isPaymentAccountEligible,
+} from '../modules/payments/application/queries/get-payout-eligibility.use-case.js';
+
+export class MonitorPublicationBlockedError extends Error {
+  constructor() {
+    super('PAYMENT_ACCOUNT_REQUIRED_FOR_PUBLICATION');
+  }
+}
 
 export class MonitorRepository {
   private readonly monitorTree = {
     teacher: true,
     subjects: {
       orderBy: { position: 'asc' as const },
-      include: { topics: { orderBy: { position: 'asc' as const } } },
+      include: {
+        topics: {
+          orderBy: { position: 'asc' as const },
+          include: {
+            questionBankSelections: { orderBy: { createdAt: 'asc' as const } },
+            subtopics: {
+              orderBy: { position: 'asc' as const },
+              include: {
+                questionBankSelections: { orderBy: { createdAt: 'asc' as const } },
+                subsubtopics: {
+                  orderBy: { position: 'asc' as const },
+                  include: { questionBankSelections: { orderBy: { createdAt: 'asc' as const } } },
+                },
+              },
+            },
+          },
+        },
+      },
     },
     _count: {
       select: {
@@ -24,37 +57,137 @@ export class MonitorRepository {
   async createDraft(userId: string, input: CreateMonitorInput) {
     const teacher = await prisma.teacher.findUnique({
       where: { userId },
-      select: { id: true, status: true },
+      select: {
+        id: true,
+        status: true,
+        currentPaymentAccount: { select: { status: true, generalStatus: true } },
+      },
     });
 
     if (!teacher) return { kind: 'TEACHER_NOT_FOUND' as const };
     if (teacher.status !== 'active') return { kind: 'TEACHER_NOT_ACTIVE' as const };
+    if (!isPaymentAccountEligible(teacher.currentPaymentAccount)) {
+      return { kind: 'PAYMENT_ACCOUNT_REQUIRED' as const };
+    }
 
-    const monitor = await prisma.monitor.create({
-      data: {
-        teacherId: teacher.id,
+    const normalizedSelections = Array.from(
+      new Map(
+        (input.questionBankSelections ?? [])
+          .map(normalizeQuestionBankSelection)
+          .map((selection) => [selection.selectionKey, selection] as const),
+      ).values(),
+    );
+
+    console.log('Preparando criação transacional do Monitor', {
+      event: 'monitor.create_transaction_started',
+      userId,
+      teacherId: teacher.id,
+      monitorInput: {
         name: input.name,
-        description: input.description || null,
-        status: 'DRAFT',
-        subjects: {
-          create: input.subjects.map((subject, subjectIndex) => ({
-            name: subject.name,
-            position: subjectIndex,
-            topics: {
-              create: subject.topics.map((topic, topicIndex) => ({
-                name: topic.name,
-                definition: topic.definition || null,
-                definitionOrigin: topic.definition ? 'TEACHER' : null,
-                definitionUpdatedAt: topic.definition ? new Date() : null,
-                position: topicIndex,
+        description: input.description ?? null,
+        subjects: input.subjects,
+      },
+      normalizedSelections,
+    });
+
+    const monitor = await prisma.$transaction(async (transaction) => {
+        const createdMonitor = await transaction.monitor.create({
+          data: {
+            teacherId: teacher.id,
+            name: input.name,
+            description: input.description || null,
+            status: 'DRAFT',
+            subjects: {
+              create: input.subjects.map((subject, subjectIndex) => ({
+                name: subject.name,
+                position: subjectIndex,
+                topics: {
+                  create: buildMonitorTopicHierarchy(subject.topics).map((topic) => ({
+                    name: topic.name,
+                    definition: topic.definition || null,
+                    definitionOrigin: topic.definition ? 'TEACHER' : null,
+                    definitionUpdatedAt: topic.definition ? new Date() : null,
+                    position: topic.position,
+                    subtopics: {
+                      create: topic.subtopics.map((subtopic) => ({
+                        name: subtopic.name,
+                        position: subtopic.position,
+                        subsubtopics: {
+                          create: subtopic.subsubtopics.map((subsubtopic) => ({
+                            name: subsubtopic.name,
+                            position: subsubtopic.position,
+                          })),
+                        },
+                      })),
+                    },
+                  })),
+                },
               })),
             },
-          })),
-        },
-      },
-      include: {
-        ...this.monitorTree,
-      },
+          },
+        });
+
+        if (normalizedSelections.length > 0) {
+          const localSubjects = await transaction.monitorSubject.findMany({
+            where: { monitorId: createdMonitor.id },
+            include: { topics: { include: { subtopics: { include: { subsubtopics: true } } } } },
+          });
+          const subjectMap = new Map(localSubjects.map((subject) => [normalizeTaxonomyName(subject.name), subject]));
+
+          const selectionRows = normalizedSelections.map((selection) => {
+            const localSubject = subjectMap.get(normalizeTaxonomyName(selection.subject));
+            const localTopicName = buildMonitorTopicName(selection);
+            const localTopic = localSubject?.topics.find(
+              (topic) => normalizeTaxonomyName(topic.name) === normalizeTaxonomyName(selection.topic),
+            );
+            const localSubtopic = selection.subtopic
+              ? localTopic?.subtopics.find((subtopic) => normalizeTaxonomyName(subtopic.name) === normalizeTaxonomyName(selection.subtopic))
+              : null;
+            const localSubsubtopic = selection.subsubtopic
+              ? localSubtopic?.subsubtopics.find((subsubtopic) => normalizeTaxonomyName(subsubtopic.name) === normalizeTaxonomyName(selection.subsubtopic))
+              : null;
+
+            if (!localSubject || !localTopic || (selection.subtopic && !localSubtopic) || (selection.subsubtopic && !localSubsubtopic)) {
+              throw new Error(`QUESTION_BANK_SELECTION_TOPIC_NOT_FOUND: ${selection.subject} / ${localTopicName}`);
+            }
+
+            return {
+              monitorTopicId: localTopic.id,
+              monitorSubtopicId: localSubtopic?.id ?? null,
+              monitorSubsubtopicId: localSubsubtopic?.id ?? null,
+              examType: selection.examType,
+              board: selection.board,
+              subtopic: selection.subtopic,
+              subsubtopic: selection.subsubtopic,
+              selectionKey: selection.selectionKey,
+            };
+          });
+
+          await transaction.monitorQuestionBankSelection.createMany({ data: selectionRows });
+          console.log('Seleções do acervo associadas aos tópicos locais', {
+            event: 'monitor.question_bank_selections_persisted',
+            monitorId: createdMonitor.id,
+            selectionCount: selectionRows.length,
+            selections: selectionRows,
+          });
+        }
+
+        return transaction.monitor.findUniqueOrThrow({
+          where: { id: createdMonitor.id },
+          include: this.monitorTree,
+        });
+    }, { maxWait: 10_000, timeout: 60_000 });
+
+    console.log('Criação transacional do Monitor concluída', {
+      event: 'monitor.create_transaction_completed',
+      monitorId: monitor.id,
+      status: monitor.status,
+      subjectCount: monitor.subjects.length,
+      topicCount: monitor.subjects.reduce((total, subject) => total + subject.topics.length, 0),
+      selectionCount: monitor.subjects.reduce(
+        (total, subject) => total + subject.topics.reduce((topicTotal, topic) => topicTotal + topic.questionBankSelections.length, 0),
+        0,
+      ),
     });
 
     return { kind: 'CREATED' as const, monitor };
@@ -70,24 +203,98 @@ export class MonitorRepository {
       teacherEmail: teacher?.email,
     });
 
+    if (!teacher) return [];
+
     const monitors = await prisma.monitor.findMany({
-      where: {
-        OR: [
-          { teacher: { userId } },
-          ...(teacher ? [{ teacherId: teacher.id }] : []),
-        ],
+      where: { teacherId: teacher.id },
+      select: {
+        id: true,
+        teacherId: true,
+        name: true,
+        description: true,
+        detailedDescription: true,
+        priceCents: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
       },
-      include: this.monitorTree,
-      orderBy: { updatedAt: 'desc' },
     });
+
+    if (monitors.length === 0) return [];
+
+    const monitorIds = monitors.map((monitor) => monitor.id);
+    const [subjects, counts, reportedQuestions] = await Promise.all([
+      prisma.monitorSubject.findMany({
+        where: { monitorId: { in: monitorIds } },
+        select: {
+          id: true,
+          monitorId: true,
+          name: true,
+          position: true,
+          topics: {
+            select: {
+              id: true,
+              name: true,
+              definition: true,
+              classificationGuidance: true,
+              position: true,
+            },
+          },
+        },
+      }),
+      prisma.monitor.findMany({
+        where: { id: { in: monitorIds } },
+        select: {
+          id: true,
+          _count: {
+            select: {
+              questions: { where: { status: 'APPROVED' } },
+              flashcards: { where: { status: 'APPROVED' } },
+              documents: true,
+            },
+          },
+        },
+      }),
+      prisma.question.findMany({
+        where: { monitorId: { in: monitorIds }, status: 'REPORTED' },
+        select: { id: true, monitorId: true },
+      }),
+    ]);
+
+    const subjectsByMonitor = new Map<string, typeof subjects>();
+    for (const subject of subjects) {
+      const current = subjectsByMonitor.get(subject.monitorId) ?? [];
+      current.push(subject);
+      subjectsByMonitor.set(subject.monitorId, current);
+    }
+    const countsByMonitor = new Map(counts.map((item) => [item.id, item._count]));
+    const reportedByMonitor = new Map<string, Array<{ id: string }>>();
+    for (const question of reportedQuestions) {
+      const current = reportedByMonitor.get(question.monitorId) ?? [];
+      current.push({ id: question.id });
+      reportedByMonitor.set(question.monitorId, current);
+    }
+
+    monitors.sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
+    const monitorsWithSummary = monitors.map((monitor) => ({
+      ...monitor,
+      subjects: (subjectsByMonitor.get(monitor.id) ?? [])
+        .sort((left, right) => left.position - right.position)
+        .map((subject) => ({
+          ...subject,
+          topics: subject.topics.sort((left, right) => left.position - right.position),
+        })),
+      _count: countsByMonitor.get(monitor.id) ?? { questions: 0, flashcards: 0, documents: 0 },
+      questions: reportedByMonitor.get(monitor.id) ?? [],
+    }));
 
     console.log('[MonitorRepository.findAllOwnedByUserId] Monitores retornados do DB:', {
       userId,
-      count: monitors.length,
-      monitors: monitors.map((m) => ({ id: m.id, name: m.name, status: m.status })),
+      count: monitorsWithSummary.length,
+      monitors: monitorsWithSummary.map((m) => ({ id: m.id, name: m.name, status: m.status })),
     });
 
-    return monitors;
+    return monitorsWithSummary;
   }
 
   async findOwnedByUserId(userId: string, monitorId: string) {
@@ -116,9 +323,21 @@ export class MonitorRepository {
         name: name.trim(),
         position: nextPosition,
         topics: {
-          create: validTopics.map((topicName, idx) => ({
-            name: topicName,
-            position: idx,
+          create: buildMonitorTopicHierarchy(validTopics.map((topicName) => ({ name: topicName }))).map((topic) => ({
+            name: topic.name,
+            position: topic.position,
+            subtopics: {
+              create: topic.subtopics.map((subtopic) => ({
+                name: subtopic.name,
+                position: subtopic.position,
+                subsubtopics: {
+                  create: subtopic.subsubtopics.map((subsubtopic) => ({
+                    name: subsubtopic.name,
+                    position: subsubtopic.position,
+                  })),
+                },
+              })),
+            },
           })),
         },
       },
@@ -143,24 +362,77 @@ export class MonitorRepository {
   async addTopic(userId: string, monitorId: string, subjectId: string, name: string, definition?: string) {
     const subject = await prisma.monitorSubject.findFirst({
       where: { id: subjectId, monitorId, monitor: { teacher: { userId } } },
-      include: { topics: { orderBy: { position: 'asc' } } },
+      include: {
+        topics: {
+          orderBy: { position: 'asc' },
+          include: { subtopics: { orderBy: { position: 'asc' }, include: { subsubtopics: { orderBy: { position: 'asc' } } } } },
+        },
+      },
     });
     if (!subject) return null;
 
-    const nextPosition = subject.topics.length > 0
-      ? Math.max(...subject.topics.map((t) => t.position)) + 1
-      : 0;
+    const hierarchy = buildMonitorTopicHierarchy([{ name, definition }]);
+    const root = hierarchy[0];
+    if (!root) return this.findOwnedByUserId(userId, monitorId);
 
-    await prisma.monitorTopic.create({
-      data: {
-        subjectId,
-        name: name.trim(),
-        definition: definition?.trim() || null,
-        definitionOrigin: definition?.trim() ? 'TEACHER' : null,
-        definitionUpdatedAt: definition?.trim() ? new Date() : null,
-        position: nextPosition,
-      },
-    });
+    const existingTopic = subject.topics.find((topic) => normalizeTaxonomyName(topic.name) === normalizeTaxonomyName(root.name));
+    if (!existingTopic) {
+      const nextPosition = subject.topics.length > 0
+        ? Math.max(...subject.topics.map((topic) => topic.position)) + 1
+        : 0;
+      await prisma.monitorTopic.create({
+        data: {
+          subjectId,
+          name: root.name,
+          definition: root.definition,
+          definitionOrigin: root.definition ? 'TEACHER' : null,
+          definitionUpdatedAt: root.definition ? new Date() : null,
+          position: nextPosition,
+          subtopics: {
+            create: root.subtopics.map((subtopic) => ({
+              name: subtopic.name,
+              position: subtopic.position,
+              subsubtopics: {
+                create: subtopic.subsubtopics.map((subsubtopic) => ({ name: subsubtopic.name, position: subsubtopic.position })),
+              },
+            })),
+          },
+        },
+      });
+    } else {
+      const localTopic = existingTopic;
+      for (const subtopic of root.subtopics) {
+        const existingSubtopic = localTopic.subtopics.find((candidate) => normalizeTaxonomyName(candidate.name) === normalizeTaxonomyName(subtopic.name));
+        let localSubtopicId: string;
+        let existingSubsubtopicNames: string[];
+        if (!existingSubtopic) {
+          const createdSubtopic = await prisma.monitorSubtopic.create({
+            data: {
+              monitorTopicId: localTopic.id,
+              name: subtopic.name,
+              position: localTopic.subtopics.length,
+            },
+          });
+          localSubtopicId = createdSubtopic.id;
+          existingSubsubtopicNames = [];
+        } else {
+          localSubtopicId = existingSubtopic.id;
+          existingSubsubtopicNames = existingSubtopic.subsubtopics.map((candidate) => normalizeTaxonomyName(candidate.name));
+        }
+        for (const subsubtopic of subtopic.subsubtopics) {
+          if (!existingSubsubtopicNames.includes(normalizeTaxonomyName(subsubtopic.name))) {
+            await prisma.monitorSubsubtopic.create({
+              data: {
+                monitorSubtopicId: localSubtopicId,
+                name: subsubtopic.name,
+                position: existingSubsubtopicNames.length,
+              },
+            });
+            existingSubsubtopicNames.push(normalizeTaxonomyName(subsubtopic.name));
+          }
+        }
+      }
+    }
 
     return this.findOwnedByUserId(userId, monitorId);
   }
@@ -194,6 +466,16 @@ export class MonitorRepository {
     });
     if (!monitor) return null;
 
+    if (data.status === 'PUBLISHED' && !monitor.allowPublishWithoutPaymentAccount) {
+      const teacher = await prisma.teacher.findUnique({
+        where: { id: monitor.teacherId },
+        select: { currentPaymentAccount: { select: { status: true, generalStatus: true } } },
+      });
+      if (!canPublishMonitor({ allowPublishWithoutPaymentAccount: monitor.allowPublishWithoutPaymentAccount, account: teacher?.currentPaymentAccount ?? null })) {
+        throw new MonitorPublicationBlockedError();
+      }
+    }
+
     await prisma.monitor.update({
       where: { id: monitorId },
       data: {
@@ -208,9 +490,13 @@ export class MonitorRepository {
     return this.findOwnedByUserId(userId, monitorId);
   }
 
+  async setPublicationException(monitorId: string, allowed: boolean) {
+    return prisma.monitor.update({ where: { id: monitorId }, data: { allowPublishWithoutPaymentAccount: allowed } });
+  }
+
   async getQuestionBankCatalog() {
     const rows = await prisma.$queryRaw<Array<{
-      board_name: string;
+      board: string | null;
       exam_type: string;
       subject: string;
       topic: string;
@@ -219,7 +505,7 @@ export class MonitorRepository {
       count: number;
     }>>`
       SELECT 
-        COALESCE(NULLIF(board, ''), NULLIF(institution, ''), NULLIF(exam_type, ''), 'ENEM') as board_name,
+        NULLIF(board, '') as board,
         COALESCE(NULLIF(exam_type, ''), 'ENEM') as exam_type,
         subject,
         topic,
@@ -228,7 +514,7 @@ export class MonitorRepository {
         COUNT(*)::int as count
       FROM question_bank_items
       WHERE status != 'DELETED'
-      GROUP BY COALESCE(NULLIF(board, ''), NULLIF(institution, ''), NULLIF(exam_type, ''), 'ENEM'), COALESCE(NULLIF(exam_type, ''), 'ENEM'), subject, topic, subtopic, subsubtopic
+      GROUP BY NULLIF(board, ''), COALESCE(NULLIF(exam_type, ''), 'ENEM'), subject, topic, subtopic, subsubtopic
       ORDER BY subject, topic, subtopic, subsubtopic
     `;
 
@@ -236,7 +522,7 @@ export class MonitorRepository {
   }
 
   private buildTaxonomyFromQuestionBank(rows: Array<{
-    board_name: string;
+    board: string | null;
     exam_type: string;
     subject: string;
     topic: string;
@@ -248,6 +534,8 @@ export class MonitorRepository {
     const examProfilesMap = new Map<string, {
       id: string;
       name: string;
+      examType: string;
+      board: string | null;
       category: string;
       description: string;
       badge: string;
@@ -282,15 +570,19 @@ export class MonitorRepository {
       totalQuestions += rowCount;
 
       // Agregação de Perfis de Prova & Bancas
-      const rawExamName = (row.board_name || row.exam_type || 'ENEM').trim();
-      const examKey = rawExamName.toUpperCase();
-      const profileId = rawExamName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const rawExamType = (row.exam_type || 'ENEM').trim().toUpperCase();
+      const rawBoard = row.board?.trim() || null;
+      const rawExamName = rawBoard || rawExamType;
+      const examKey = `${rawExamType}|${rawBoard || ''}`;
+      const profileId = `${rawExamType}${rawBoard ? `-${rawBoard}` : ''}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
       if (!examProfilesMap.has(examKey)) {
         examProfilesMap.set(examKey, {
           id: profileId,
           name: rawExamName,
-          category: this.inferExamCategory(rawExamName),
-          description: this.inferExamDescription(rawExamName),
+          examType: rawExamType,
+          board: rawBoard,
+          category: this.inferExamCategory(`${rawExamType} ${rawExamName}`),
+          description: this.inferExamDescription(`${rawExamType} ${rawExamName}`),
           badge: this.inferExamBadge(rawExamName),
           questionCount: 0,
         });
@@ -445,4 +737,3 @@ export class MonitorRepository {
     return 'Geral';
   }
 }
-

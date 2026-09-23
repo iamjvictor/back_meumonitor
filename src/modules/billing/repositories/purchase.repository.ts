@@ -25,18 +25,36 @@ export class PurchaseRepository extends StudentPurchaseRepository {
       const now = new Date();
       const periodEnd = new Date(now); periodEnd.setMonth(periodEnd.getMonth() + 1);
       const providerSubscriptionId = event.subscriptionId ?? `${input.provider.toLowerCase()}:${current.id}`;
-      const subscription = await tx.billingSubscription.upsert({
-        where: { providerSubscriptionId },
-        create: { studentId: current.studentId, customerId: customer.id, providerSubscriptionId, status: 'ACTIVE', billingInterval: 'MONTH', currency: current.currency, subtotalAmount: current.subtotalAmount, discountAmount: current.discountAmount, totalAmount: current.totalAmount, currentPeriodStart: now, currentPeriodEnd: periodEnd },
-        update: { status: 'ACTIVE', totalAmount: current.totalAmount, currentPeriodEnd: periodEnd, cancelledAt: null, cancelAtPeriodEnd: false },
+      const activeSubscription = await tx.billingSubscription.findFirst({
+        where: { studentId: current.studentId, status: { in: ['ACTIVE', 'TRIALING'] } },
       });
+      const subscription = activeSubscription
+        ? await tx.billingSubscription.update({
+            where: { id: activeSubscription.id },
+            data: {
+              status: 'ACTIVE',
+              subtotalAmount: { increment: current.subtotalAmount },
+              discountAmount: { increment: current.discountAmount },
+              totalAmount: { increment: current.totalAmount },
+              cancelledAt: null,
+              cancelAtPeriodEnd: false,
+            },
+          })
+        : await tx.billingSubscription.upsert({
+            where: { providerSubscriptionId },
+            create: { studentId: current.studentId, customerId: customer.id, providerSubscriptionId, status: 'ACTIVE', billingInterval: 'MONTH', currency: current.currency, subtotalAmount: current.subtotalAmount, discountAmount: current.discountAmount, totalAmount: current.totalAmount, currentPeriodStart: now, currentPeriodEnd: periodEnd },
+            update: { status: 'ACTIVE', totalAmount: current.totalAmount, currentPeriodEnd: periodEnd, cancelledAt: null, cancelAtPeriodEnd: false },
+          });
+      if (activeSubscription) {
+        log('monitor.billing_subscription_reused', { provider: input.provider, purchaseId: current.id, subscriptionId: subscription.id, providerSubscriptionId: subscription.providerSubscriptionId, status: subscription.status });
+      }
       log('monitor.billing_subscription_persisted', { provider: input.provider, purchaseId: current.id, subscriptionId: subscription.id, providerSubscriptionId: subscription.providerSubscriptionId, status: subscription.status });
       let enrollmentCount = 0;
       for (const item of current.items) {
         const subItem = await tx.billingSubscriptionItem.upsert({
           where: { subscriptionId_monitorId: { subscriptionId: subscription.id, monitorId: item.monitorId } },
-          create: { subscriptionId: subscription.id, monitorId: item.monitorId, status: 'ACTIVE', amountBeforeDiscount: item.unitAmount, discountAmount: 0, finalAmount: item.unitAmount, currentPeriodEnd: periodEnd },
-          update: { status: 'ACTIVE', removedAt: null, currentPeriodEnd: periodEnd },
+          create: { subscriptionId: subscription.id, monitorId: item.monitorId, status: 'ACTIVE', amountBeforeDiscount: item.unitAmount, discountAmount: 0, finalAmount: item.unitAmount, currentPeriodEnd: subscription.currentPeriodEnd },
+          update: { status: 'ACTIVE', removedAt: null, currentPeriodEnd: subscription.currentPeriodEnd },
         });
         await tx.studentEnrollment.upsert({
           where: { studentId_monitorId: { studentId: current.studentId, monitorId: item.monitorId } },

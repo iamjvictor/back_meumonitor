@@ -3,9 +3,11 @@ import { z } from 'zod';
 import { AppError } from '../core/errors/app-error.js';
 import { createMonitorSchema, monitorIdParamsSchema, updateMonitorSchema } from '../models/monitor.model.js';
 import { MonitorService } from '../services/monitor.service.js';
+import { MonitorPublicationBlockedError } from '../repositories/monitor.repository.js';
 
 export const addSubjectBodySchema = z.object({ name: z.string().trim().min(1).max(120), topics: z.array(z.string().trim().min(1).max(120)).min(1).max(30) }).strict();
 export const addTopicBodySchema = z.object({ name: z.string().trim().min(1).max(120), definition: z.string().trim().max(4000).optional() }).strict();
+export const publicationExceptionBodySchema = z.object({ allowPublishWithoutPaymentAccount: z.boolean() }).strict();
 
 export class MonitorController {
   constructor(private readonly service: MonitorService) {}
@@ -27,6 +29,8 @@ export class MonitorController {
         requestId: request.id,
         userId: request.user.id,
         invalidFields: Object.keys(parsed.error.flatten().fieldErrors),
+        validationIssues: parsed.error.issues,
+        receivedBody: request.body,
       });
       return reply.code(400).send({
         error: 'VALIDATION_ERROR',
@@ -34,6 +38,13 @@ export class MonitorController {
         details: parsed.error.flatten().fieldErrors,
       });
     }
+
+    console.log('Payload de criação de Monitor recebido', {
+      event: 'monitor.create_payload_received',
+      requestId: request.id,
+      userId: request.user.id,
+      payload: parsed.data,
+    });
 
     try {
       const result = await this.service.createDraft(request.user.id, parsed.data);
@@ -44,6 +55,12 @@ export class MonitorController {
       if (result.kind === 'TEACHER_NOT_ACTIVE') {
         return reply.code(403).send({ error: 'TEACHER_PROFILE_NOT_ACTIVE', message: 'Seu perfil precisa estar ativo para criar um monitor.' });
       }
+      if (result.kind === 'PAYMENT_ACCOUNT_REQUIRED') {
+        return reply.code(403).send({
+          error: 'PAYMENT_ACCOUNT_REQUIRED_FOR_CREATION',
+          message: 'Configure e aguarde a aprovação da conta de recebimento antes de criar um monitor.',
+        });
+      }
 
       console.log('Monitor de IA salvo como rascunho', {
         event: 'monitor.create_completed',
@@ -51,9 +68,13 @@ export class MonitorController {
         userId: request.user.id,
         monitorId: result.monitor.id,
         status: result.monitor.status,
+        materialization: result.materialization,
         durationMs: Date.now() - startedAt,
       });
-      return reply.code(201).send({ data: result.monitor });
+      return reply.code(201).send({
+        data: result.monitor,
+        materialization: result.materialization,
+      });
     } catch (error) {
       console.log('Falha ao criar Monitor de IA', {
         event: 'monitor.create_failed',
@@ -61,6 +82,8 @@ export class MonitorController {
         userId: request.user.id,
         durationMs: Date.now() - startedAt,
         errorType: error instanceof Error ? error.name : 'UnknownError',
+        errorCode: typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined,
+        errorMessage: error instanceof Error ? error.message : String(error),
       });
       return reply.code(500).send({ error: 'MONITOR_CREATION_FAILED', message: 'Nao foi possivel criar o Monitor de IA.' });
     }
@@ -209,9 +232,23 @@ export class MonitorController {
 
       return reply.code(200).send({ data: monitor });
     } catch (error) {
+      if (error instanceof MonitorPublicationBlockedError) {
+        return reply.code(403).send({ error: 'PAYMENT_ACCOUNT_REQUIRED_FOR_PUBLICATION', message: 'Configure uma conta de recebimento aprovada antes de publicar o monitor.' });
+      }
       console.log('Falha ao atualizar Monitor de IA', { event: 'monitor.update_failed', requestId: request.id, userId: request.user.id, monitorId: params.data.monitorId, errorType: error instanceof Error ? error.name : 'UnknownError' });
       return reply.code(500).send({ error: 'MONITOR_UPDATE_FAILED', message: 'Nao foi possivel atualizar o Monitor de IA.' });
     }
+  }
+
+  async setPublicationException(request: FastifyRequest<{ Params: { monitorId: string }; Body: { allowPublishWithoutPaymentAccount?: boolean } }>, reply: FastifyReply) {
+    if (!request.user) return reply.code(401).send({ error: 'UNAUTHENTICATED', message: 'Sessão obrigatória.' });
+    if (request.user.role?.toLowerCase() !== 'admin') return reply.code(403).send({ error: 'FORBIDDEN', message: 'Apenas administradores podem liberar publicação sem conta.' });
+    const params = monitorIdParamsSchema.safeParse(request.params);
+    const body = publicationExceptionBodySchema.safeParse(request.body);
+    if (!params.success || !body.success) return reply.code(422).send({ error: 'VALIDATION_ERROR', message: 'Dados de dispensa inválidos.' });
+    const monitor = await this.service.setPublicationException(request.user.id, params.data.monitorId, body.data.allowPublishWithoutPaymentAccount);
+    if (!monitor) return reply.code(404).send({ error: 'MONITOR_NOT_FOUND', message: 'Monitor não encontrado.' });
+    return reply.send({ data: monitor });
   }
 
   async getQuestionBankCatalog(request: FastifyRequest, reply: FastifyReply) {

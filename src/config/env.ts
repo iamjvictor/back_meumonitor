@@ -17,9 +17,10 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
+  PUBLIC_API_URL: z.string().url().optional(),
   DOCUMENT_INGESTION_V3_ENABLED: z.preprocess((value) => value === 'true', z.boolean()).default(false),
   DOCUMENT_PARSER_BASE_URL: z.string().url().optional(),
-  DOCUMENT_PARSER_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  DOCUMENT_PARSER_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
   DOCUMENT_PARSER_MAX_ATTEMPTS: z.coerce.number().int().positive().default(1),
   OPENROUTER_API_KEY: z.string().min(1).optional(),
   AI_REASONING_EFFORT: z.enum(['none', 'low', 'medium', 'high']).default('low'),
@@ -78,8 +79,21 @@ const envSchema = z.object({
   QUESTION_CANDIDATE_CONCURRENCY: z.coerce.number().int().positive().max(8).default(3),
   FLASHCARD_GENERATION_CONCURRENCY: z.coerce.number().int().positive().max(8).default(3),
   CORS_ORIGINS: z.string().default(''),
+  PAYMENTS_PROVIDER: z.enum(['SIMULATED', 'ASAAS']).default('SIMULATED'),
+  ASAAS_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
+  ASAAS_API_KEY: z.string().min(1).optional(),
+  ASAAS_WEBHOOK_AUTH_TOKEN: z.string().min(32).max(255).optional(),
+  ASAAS_WEBHOOK_URL: z.string().url().optional(),
+  ASAAS_WEBHOOK_EMAIL: z.string().email().optional(),
+  ASAAS_WEBHOOK_ID: z.string().optional(),
+  PAYMENTS_RETURN_BASE_URL: z.string().url().optional(),
+  ASAAS_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
   PAYMENTS_SIMULATION_ENABLED: z.preprocess((value) => value === 'true', z.boolean()).default(false),
   PAYMENTS_TEST_PRICE_CENTS: z.coerce.number().int().positive().default(1990),
+}).superRefine((value, context) => {
+  if (value.PAYMENTS_PROVIDER === 'ASAAS' && !value.ASAAS_API_KEY) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['ASAAS_API_KEY'], message: 'ASAAS_API_KEY é obrigatória quando PAYMENTS_PROVIDER=ASAAS' });
+  }
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
