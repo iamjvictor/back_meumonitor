@@ -9,6 +9,10 @@ export class CheckoutIdempotencyKeyRequiredError extends Error {}
 export class CheckoutIdempotencyKeyReusedError extends Error {}
 export class CheckoutPendingError extends Error {}
 
+// Temporary Sandbox override. Keep the monitor/catalog price unchanged while
+// making the local order and provider checkout agree on the one-cent test value.
+export const TEMPORARY_CHECKOUT_PRICE_OVERRIDE_CENTS = 1;
+
 export type CreateCheckoutInput = { monitorId: string; idempotencyKey: string; returnBaseUrl: string };
 
 export class CreateCheckoutUseCase {
@@ -58,6 +62,14 @@ export class CreateCheckoutUseCase {
       found: Boolean(monitor),
     });
     if (!monitor) throw new CheckoutMonitorNotFoundError();
+    const checkoutMonitor = { ...monitor, priceCents: TEMPORARY_CHECKOUT_PRICE_OVERRIDE_CENTS };
+    console.warn('Override temporário de preço aplicado ao checkout', {
+      event: 'payments.checkout_price_override_applied',
+      studentId: student.id,
+      monitorId: monitor.id,
+      catalogPriceCents: monitor.priceCents,
+      checkoutPriceCents: checkoutMonitor.priceCents,
+    });
     console.log('Criando intenção local de checkout', {
       event: 'payments.checkout_intent_creation_started',
       studentId: student.id,
@@ -65,7 +77,7 @@ export class CreateCheckoutUseCase {
     });
     const intent = await this.repository.createIntent({
       studentId: student.id,
-      monitor,
+      monitor: checkoutMonitor,
       idempotencyKey: key,
       requestFingerprint: fingerprint,
     });
@@ -82,9 +94,9 @@ export class CreateCheckoutUseCase {
     try {
       checkout = await this.provider.createHostedCheckout({
         externalReference: intent.order.id,
-        monitorName: monitor.name,
+        monitorName: checkoutMonitor.name,
         description: 'Assinatura mensal do monitor',
-        amountCents: monitor.priceCents,
+        amountCents: checkoutMonitor.priceCents,
         successUrl: `${callbackBase}/areadoaluno?orderId=${intent.order.id}&status=success`,
         cancelUrl: `${callbackBase}/areadoaluno?orderId=${intent.order.id}&status=cancelled`,
         expiredUrl: `${callbackBase}/areadoaluno?orderId=${intent.order.id}&status=expired`,
