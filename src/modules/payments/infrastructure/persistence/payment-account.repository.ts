@@ -80,6 +80,28 @@ export class PaymentAccountRepository {
     return credential ? { id: credential.id, accountId, environment: credential.environment, ciphertext: credential.ciphertext, nonce: credential.nonce, authTag: credential.authTag, keyVersion: credential.keyVersion } : null;
   }
 
+  async findAccountByUserAndEnvironment(userId: string, environment: string) {
+    return this.database.paymentAccount.findFirst({ where: { environment, teacher: { userId } }, select: { id: true, environment: true } });
+  }
+
+  async replaceCredential(accountId: string, environment: string, encrypted: { ciphertext: string; nonce: string; authTag: string; keyVersion: number }, credentialId: string) {
+    return this.database.$transaction(async (transaction) => {
+      const account = await transaction.paymentAccount.findFirstOrThrow({ where: { id: accountId, environment } });
+      await transaction.paymentAccountCredential.deleteMany({ where: { paymentAccountId: account.id } });
+      const credential = await transaction.paymentAccountCredential.create({ data: { id: credentialId, paymentAccountId: account.id, environment, ...encrypted } });
+      await transaction.paymentAccount.update({ where: { id: account.id }, data: { credentialRef: credential.id } });
+      return { id: credential.id };
+    });
+  }
+
+  async revokeCredential(accountId: string, environment: string) {
+    return this.database.$transaction(async (transaction) => {
+      const account = await transaction.paymentAccount.findFirstOrThrow({ where: { id: accountId, environment } });
+      await transaction.paymentAccountCredential.deleteMany({ where: { paymentAccountId: account.id } });
+      await transaction.paymentAccount.update({ where: { id: account.id }, data: { credentialRef: null } });
+    });
+  }
+
   async persistCreatedAccount(userId: string, input: CreateSubaccountCommand, created: CreatedSubaccount) {
     return this.database.$transaction(async (transaction) => {
       const teacher = await transaction.teacher.findUniqueOrThrow({ where: { userId }, select: { id: true } });

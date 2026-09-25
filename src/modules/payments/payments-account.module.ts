@@ -10,6 +10,7 @@ import { AsaasAccountOverviewProvider } from './infrastructure/providers/asaas/a
 import { GetPaymentAccountOverviewUseCase } from './application/queries/get-payment-account-overview.use-case.js';
 import { LocalPaymentAccountCredentialStore } from './infrastructure/credentials/payment-account-credential.store.js';
 import { createPaymentAccountCredentialResolver } from './application/queries/get-payment-account-overview.use-case.js';
+import { RotatePaymentAccountCredentialUseCase } from './application/commands/rotate-payment-account-credential.use-case.js';
 
 export function createPaymentAccountModule() {
   const httpClient = new AsaasHttpClient({ apiKey: env.ASAAS_API_KEY ?? '', baseUrl: getAsaasBaseUrl(env.ASAAS_ENV), environment: env.ASAAS_ENV, timeoutMs: env.ASAAS_HTTP_TIMEOUT_MS });
@@ -20,6 +21,7 @@ export function createPaymentAccountModule() {
   });
   const credentialStore = new LocalPaymentAccountCredentialStore();
   const repository = new PaymentAccountRepository(credentialStore);
+  const rotateCredential = new RotatePaymentAccountCredentialUseCase(repository, credentialStore);
   const startAccount = new StartPaymentAccountUseCase(repository, provider);
   const getAccount = new GetPaymentAccountUseCase(repository);
   const overviewProvider = new AsaasAccountOverviewProvider(httpClient, {
@@ -38,7 +40,7 @@ export function createPaymentAccountModule() {
     }),
   });
   const controller = new PaymentAccountController(getAccount, startAccount, getOverview);
-  return { repository, provider, startAccount, getAccount, overviewProvider, getOverview, controller };
+  return { repository, provider, startAccount, getAccount, overviewProvider, getOverview, controller, rotateCredential };
 }
 
 function resolveAsaasDashboardUrl(environment: 'sandbox' | 'production', configuredUrl: string): string {

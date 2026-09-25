@@ -6,4 +6,5 @@ export async function paymentAccountRoutes(app: FastifyInstance, controller: Pay
   app.get('/teachers/me/payment-account', { onRequest: authMiddleware }, controller.get.bind(controller));
   app.post('/teachers/me/payment-account', { onRequest: authMiddleware }, controller.start.bind(controller));
   app.get('/teachers/me/payment-account/status', { onRequest: authMiddleware }, controller.get.bind(controller));
+  app.get('/teachers/me/payment-account/overview', { onRequest: authMiddleware }, controller.overview.bind(controller));
 }
