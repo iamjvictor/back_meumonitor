@@ -13,8 +13,10 @@ import { PrismaPaymentWebhookRepository } from './modules/payments/infrastructur
 import { ProcessPaymentWebhookUseCase } from './modules/payments/application/commands/process-webhook.use-case.js';
 import { PaymentWebhookRecoveryJob } from './modules/payments/jobs/payment-recovery.job.js';
 import { PaymentAccountRepository } from './modules/payments/infrastructure/persistence/payment-account.repository.js';
+import { PaymentEventRepository } from './modules/payments/infrastructure/persistence/payment-event.repository.js';
+import { loadQuestionGenerationEnumState } from './worker/services/worker-database-bootstrap.js';
 
-const [questionGenerationEnumState] = await prisma.$queryRaw<Array<{ hasCorrection: boolean; hasNormalization: boolean }>>`
+const questionGenerationEnumState = await loadQuestionGenerationEnumState(() => prisma.$queryRaw<Array<{ hasCorrection: boolean; hasNormalization: boolean }>>`
   SELECT EXISTS (
     SELECT 1
     FROM pg_enum enum_value
@@ -29,7 +31,7 @@ const [questionGenerationEnumState] = await prisma.$queryRaw<Array<{ hasCorrecti
     WHERE enum_type.typname = 'QuestionAiGenerationType'
       AND enum_value.enumlabel = 'NORMALIZATION'
   ) AS "hasNormalization"
-`;
+`);
 
 if (!questionGenerationEnumState?.hasCorrection || !questionGenerationEnumState.hasNormalization) {
   throw new Error('Migration obrigatoria ausente: QuestionAiGenerationType.CORRECTION/NORMALIZATION. Execute npx prisma migrate deploy antes de iniciar o worker.');
@@ -42,7 +44,8 @@ const weeklySimulationWorkerService = new WeeklySimulationWorkerService();
 const paymentWebhookRepository = new PrismaPaymentWebhookRepository(env.ASAAS_ENV.toUpperCase());
 const paymentWebhookRecovery = new PaymentWebhookRecoveryJob(paymentWebhookRepository);
 const paymentAccountRepository = new PaymentAccountRepository();
-const processPaymentWebhookWithAccounts = new ProcessPaymentWebhookUseCase(paymentWebhookRepository, paymentAccountRepository);
+const paymentEventRepository = new PaymentEventRepository();
+const processPaymentWebhookWithAccounts = new ProcessPaymentWebhookUseCase(paymentWebhookRepository, paymentAccountRepository, paymentEventRepository);
 const paymentWebhookRecoveryTimer = setInterval(() => void paymentWebhookRecovery.run(), 60_000);
 void paymentWebhookRecovery.run();
 
