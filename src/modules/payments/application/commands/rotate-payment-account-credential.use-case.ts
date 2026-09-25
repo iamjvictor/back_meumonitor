@@ -6,7 +6,8 @@ type Repository = {
   replaceCredential(accountId: string, environment: string, encrypted: { ciphertext: string; nonce: string; authTag: string; keyVersion: number }, credentialId: string): Promise<{ id: string }>;
   revokeCredential(accountId: string, environment: string): Promise<void>;
   findCredentialOperation(userId: string, environment: string, operation: string, operationKey: string): Promise<{ result: unknown } | null>;
-  persistCredentialOperation(userId: string, environment: string, operation: string, operationKey: string, result: unknown): Promise<{ result: unknown } | null>;
+  rotateCredentialWithOperation(...args: any[]): Promise<unknown>;
+  revokeCredentialWithOperation(...args: any[]): Promise<unknown>;
 };
 
 export class PaymentAccountCredentialNotFoundError extends Error { constructor() { super('Payment account not found'); this.name = 'PaymentAccountCredentialNotFoundError'; } }
@@ -33,8 +34,7 @@ export class RotatePaymentAccountCredentialUseCase {
     if (account.environment !== environment) throw new PaymentAccountEnvironmentMismatchError();
     const encrypted = this.store.encrypt(account.id, environment, plaintext);
     const credentialId = randomUUID();
-    const saved = await this.repository.replaceCredential(account.id, environment, encrypted, credentialId);
-    const result = { accountId: account.id, environment, credentialId: saved.id }; const persisted = await this.repository.persistCredentialOperation(userId, environment, 'ROTATE', operationKey, result); return persisted?.result as typeof result;
+    const result = { accountId: account.id, environment, credentialId }; try { return await this.repository.rotateCredentialWithOperation(userId, environment, operationKey, encrypted, credentialId, result) as typeof result; } catch (error: any) { if (error?.code !== 'P2002') throw error; const prior = await this.repository.findCredentialOperation(userId, environment, 'ROTATE', operationKey); if (prior) return prior.result as typeof result; throw error; }
   }
 
   private async doRevoke(userId: string, environment: PaymentEnvironment, operationKey: string) {
@@ -42,8 +42,7 @@ export class RotatePaymentAccountCredentialUseCase {
     const account = await this.repository.findAccountByUserAndEnvironment(userId, environment);
     if (!account) throw new PaymentAccountCredentialNotFoundError();
     if (account.environment !== environment) throw new PaymentAccountEnvironmentMismatchError();
-    await this.repository.revokeCredential(account.id, environment);
-    const result = { accountId: account.id, environment, revoked: true as const }; const persisted = await this.repository.persistCredentialOperation(userId, environment, 'REVOKE', operationKey, result); return persisted?.result as typeof result;
+    const result = { accountId: account.id, environment, revoked: true as const }; try { return await this.repository.revokeCredentialWithOperation(userId, environment, operationKey, result) as typeof result; } catch (error: any) { if (error?.code !== 'P2002') throw error; const prior = await this.repository.findCredentialOperation(userId, environment, 'REVOKE', operationKey); if (prior) return prior.result as typeof result; throw error; }
   }
 }
 

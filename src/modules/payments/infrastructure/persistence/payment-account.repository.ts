@@ -91,6 +91,12 @@ export class PaymentAccountRepository {
     try { return await this.database.paymentAccountCredentialOperation.create({ data: { teacherId: teacher.id, environment, operation, operationKey, result: result as any }, select: { result: true } }); }
     catch (error: any) { if (error?.code !== 'P2002') throw error; return this.findCredentialOperation(userId, environment, operation, operationKey); }
   }
+  async rotateCredentialWithOperation(userId: string, environment: string, operationKey: string, encrypted: { ciphertext: string; nonce: string; authTag: string; keyVersion: number }, credentialId: string, result: unknown) {
+    return this.database.$transaction(async (tx) => { const account = await tx.paymentAccount.findFirstOrThrow({ where: { environment, teacher: { userId } } }); await tx.paymentAccountCredential.deleteMany({ where: { paymentAccountId: account.id } }); await tx.paymentAccountCredential.create({ data: { id: credentialId, paymentAccountId: account.id, environment, ...encrypted } }); await tx.paymentAccount.update({ where: { id: account.id }, data: { credentialRef: credentialId } }); await tx.paymentAccountCredentialOperation.create({ data: { teacherId: account.teacherId, environment, operation: 'ROTATE', operationKey, result: result as any } }); return result; });
+  }
+  async revokeCredentialWithOperation(userId: string, environment: string, operationKey: string, result: unknown) {
+    return this.database.$transaction(async (tx) => { const account = await tx.paymentAccount.findFirstOrThrow({ where: { environment, teacher: { userId } } }); await tx.paymentAccountCredential.deleteMany({ where: { paymentAccountId: account.id } }); await tx.paymentAccount.update({ where: { id: account.id }, data: { credentialRef: null } }); await tx.paymentAccountCredentialOperation.create({ data: { teacherId: account.teacherId, environment, operation: 'REVOKE', operationKey, result: result as any } }); return result; });
+  }
 
   async replaceCredential(accountId: string, environment: string, encrypted: { ciphertext: string; nonce: string; authTag: string; keyVersion: number }, credentialId: string) {
     return this.database.$transaction(async (transaction) => {

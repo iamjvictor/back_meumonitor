@@ -4,14 +4,14 @@ import { RotatePaymentAccountCredentialUseCase } from '../application/commands/r
 
 function repository() {
   const calls: unknown[] = [];
-  const saved = new Map<string, unknown>(); return { calls, findCredentialOperation: async (_u:string,_e:string,o:string,k:string) => saved.has(o+k) ? { result: saved.get(o+k) } : null, persistCredentialOperation: async (_u:string,_e:string,o:string,k:string,result:unknown) => { saved.set(o+k,result); return { result }; }, findAccountByUserAndEnvironment: async (userId: string, environment: string) => userId === 'teacher-1' && environment === 'SANDBOX' ? { id: 'account-1', environment: 'SANDBOX' } : null, replaceCredential: async (...args: unknown[]) => { calls.push(args); return { id: 'credential-2' }; }, revokeCredential: async (...args: unknown[]) => { calls.push(args); } } as any;
+  const saved = new Map<string, unknown>(); return { calls, findCredentialOperation: async (_u:string,_e:string,o:string,k:string) => saved.has(o+k) ? { result: saved.get(o+k) } : null, rotateCredentialWithOperation: async (_u:string,_e:string,k:string,_encrypted:unknown,_id:string,result:unknown) => { saved.set('ROTATE'+k,result); calls.push(result); return result; }, revokeCredentialWithOperation: async (_u:string,_e:string,k:string,result:unknown) => { saved.set('REVOKE'+k,result); calls.push(result); return result; }, findAccountByUserAndEnvironment: async (userId: string, environment: string) => userId === 'teacher-1' && environment === 'SANDBOX' ? { id: 'account-1', environment: 'SANDBOX' } : null } as any;
 }
 
 test('rotates only an owned account in the confirmed environment and never returns the secret', async () => {
   const repo = repository();
   const useCase = new RotatePaymentAccountCredentialUseCase(repo, { encrypt: () => ({ ciphertext: 'cipher', nonce: 'nonce', authTag: 'tag', keyVersion: 1 }) } as any);
   const result = await useCase.execute({ userId: 'teacher-1', environment: 'sandbox', operationKey: 'op-1', credential: 'new-secret' });
-  assert.deepEqual(result, { accountId: 'account-1', environment: 'SANDBOX', credentialId: 'credential-2' });
+  assert.equal((result as any).accountId, 'account-1'); assert.equal((result as any).environment, 'SANDBOX'); assert.match((result as any).credentialId, /^[0-9a-f-]{36}$/);
   assert.equal(JSON.stringify(result).includes('secret'), false);
 });
 
