@@ -9,7 +9,7 @@ export class PrismaStudentFlashcardsRepository implements FlashcardRepository {
   } as const;
 
   async findFlashcard(flashcardId: string) {
-    return prisma.flashcard.findUnique({ where: { id: flashcardId }, select: { id: true, monitorId: true } });
+    return prisma.flashcard.findFirst({ where: { id: flashcardId, status: 'APPROVED' }, select: { id: true, monitorId: true } });
   }
 
   async findProgress(input: { studentId: string; flashcardId: string }) {
@@ -50,12 +50,12 @@ export class PrismaStudentFlashcardsRepository implements FlashcardRepository {
     await prisma.studentFlashcardReviewLog.create({ data: input });
   }
 
-  async findDueCards(input: { studentId: string; monitorIds: string[]; excludeFlashcardId?: string }): Promise<RandomFlashcard[]> {
+  async findDueCards(input: { studentId: string; monitorIds: string[]; subjectId?: string; topicId?: string; excludeFlashcardId?: string }): Promise<RandomFlashcard[]> {
     const rows = await prisma.studentFlashcardProgress.findMany({
       where: {
         studentId: input.studentId,
         nextReviewAt: { lte: new Date() },
-        flashcard: { monitorId: { in: input.monitorIds }, ...(input.excludeFlashcardId ? { id: { not: input.excludeFlashcardId } } : {}) },
+        flashcard: { status: 'APPROVED', monitorId: { in: input.monitorIds }, ...(input.subjectId ? { subjectId: input.subjectId } : {}), ...(input.topicId ? { topicId: input.topicId } : {}), ...(input.excludeFlashcardId ? { id: { not: input.excludeFlashcardId } } : {}) },
       },
       orderBy: { nextReviewAt: 'asc' },
       include: { flashcard: { include: this.cardInclude } },
@@ -63,10 +63,13 @@ export class PrismaStudentFlashcardsRepository implements FlashcardRepository {
     return rows.map(({ flashcard }) => ({ ...flashcard, cardStatus: 'DUE' as const }));
   }
 
-  async findUnreviewedCards(input: { studentId: string; monitorIds: string[]; excludeFlashcardId?: string }): Promise<RandomFlashcard[]> {
+  async findUnreviewedCards(input: { studentId: string; monitorIds: string[]; subjectId?: string; topicId?: string; excludeFlashcardId?: string }): Promise<RandomFlashcard[]> {
     const rows = await prisma.flashcard.findMany({
       where: {
+        status: 'APPROVED',
         monitorId: { in: input.monitorIds },
+        ...(input.subjectId ? { subjectId: input.subjectId } : {}),
+        ...(input.topicId ? { topicId: input.topicId } : {}),
         ...(input.excludeFlashcardId ? { id: { not: input.excludeFlashcardId } } : {}),
         progresses: { none: { studentId: input.studentId } },
       },
@@ -75,9 +78,9 @@ export class PrismaStudentFlashcardsRepository implements FlashcardRepository {
     return rows.map((card) => ({ ...card, cardStatus: 'NEW' as const }));
   }
 
-  async findFallbackCards(input: { monitorIds: string[]; excludeFlashcardId?: string }): Promise<RandomFlashcard[]> {
+  async findFallbackCards(input: { monitorIds: string[]; subjectId?: string; topicId?: string; excludeFlashcardId?: string }): Promise<RandomFlashcard[]> {
     const rows = await prisma.flashcard.findMany({
-      where: { monitorId: { in: input.monitorIds }, ...(input.excludeFlashcardId ? { id: { not: input.excludeFlashcardId } } : {}) },
+      where: { status: 'APPROVED', monitorId: { in: input.monitorIds }, ...(input.subjectId ? { subjectId: input.subjectId } : {}), ...(input.topicId ? { topicId: input.topicId } : {}), ...(input.excludeFlashcardId ? { id: { not: input.excludeFlashcardId } } : {}) },
       include: this.cardInclude,
       take: 50,
     });

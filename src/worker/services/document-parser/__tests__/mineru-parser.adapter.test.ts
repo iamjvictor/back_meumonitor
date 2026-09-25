@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { DocumentParserAdapterError } from '../document-parser.adapter.js';
-import { MineruParserAdapter } from '../mineru-parser.adapter.js';
+import { buildIdempotencyKey, MineruParserAdapter } from '../mineru-parser.adapter.js';
 
 const requests: Array<{ url: string; method: string; bodyType: string; fileName?: string }> = [];
 
@@ -92,6 +92,23 @@ const fetchMock: typeof fetch = async (input, init) => {
     headers: { 'content-type': 'application/json' },
   });
 };
+
+test('idempotency do parser é isolada por documento', () => {
+  const base = {
+    contentHash: 'same-file-hash',
+    parser: 'DOCLING' as const,
+    backend: 'pipeline',
+    configurationHash: 'cfg-1',
+    parserVersion: 'docling-v3',
+    modelVersion: 'docling-layout-v3',
+    schemaVersion: 'layout-v1',
+  };
+
+  assert.notEqual(
+    buildIdempotencyKey({ ...base, documentId: 'document-1' }),
+    buildIdempotencyKey({ ...base, documentId: 'document-2' }),
+  );
+});
 
 test('adapter mantém contrato HTTP e normaliza a resposta Docling para LayoutDocument neutro', async () => {
   const adapter = new MineruParserAdapter({
@@ -217,6 +234,45 @@ test('adapter aceita a resposta inline completed do Docling sem depender de GET 
   assert.equal(requests[0]?.method, 'POST');
 });
 
+test('adapter aceita layout direto em result na resposta completed', async () => {
+  const requests: string[] = [];
+  const fetchMock: typeof fetch = async (input) => {
+    requests.push(String(input));
+    return new Response(JSON.stringify({
+      status: 'completed',
+      inputSha256: 'sha-256-direct-layout',
+      result: {
+        schemaVersion: 'docling-layout-v1',
+        pages: [],
+        warnings: [],
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+
+  const adapter = new MineruParserAdapter({
+    baseUrl: 'http://parser.test',
+    fetchImpl: fetchMock,
+  });
+
+  const submission = await adapter.parse({
+    documentId: 'document-1',
+    fileUrl: 'https://storage.test/document-1.pdf',
+    fileBytes: new Uint8Array([37, 80, 68, 70]),
+    originalName: 'document-1.pdf',
+    contentHash: 'hash-1',
+    parser: 'DOCLING',
+    backend: 'pipeline',
+    configurationHash: 'cfg-1',
+  });
+
+  assert.equal(submission.status, 'COMPLETED');
+  assert.equal(submission.result?.pages.length, 0);
+  assert.equal(requests.length, 1);
+});
+
 test('adapter expõe a causa retornada pelo Docling quando o submit falha em HTTP', async () => {
   const logs: Array<{ event: string; payload: Record<string, unknown> }> = [];
   const adapter = new MineruParserAdapter({
@@ -302,4 +358,46 @@ test('adapter registra falha de rede separadamente de timeout e HTTP', async () 
     'docling_client.request_failed',
   ]);
   assert.equal(logs[1]?.payload.failureKind, 'network');
+});
+
+test('adapter compartilha a submissão em andamento para o mesmo documento', async () => {
+  let fetchCalls = 0;
+  let releaseRequest!: () => void;
+  const requestReleased = new Promise<void>((resolve) => {
+    releaseRequest = resolve;
+  });
+  const adapter = new MineruParserAdapter({
+    baseUrl: 'http://parser.test',
+    fetchImpl: async () => {
+      fetchCalls++;
+      await requestReleased;
+      return new Response(JSON.stringify({
+        status: 'completed',
+        inputSha256: 'same-hash',
+        result: { schemaVersion: 'docling-layout-v1', pages: [], warnings: [] },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  const input = {
+    documentId: 'document-1',
+    fileUrl: 'https://storage.test/document-1.pdf',
+    fileBytes: new Uint8Array([37, 80, 68, 70]),
+    originalName: 'document-1.pdf',
+    contentHash: 'same-hash',
+    parser: 'DOCLING' as const,
+    backend: 'pipeline' as const,
+    configurationHash: 'cfg-1',
+  };
+
+  const first = adapter.parse(input);
+  const second = adapter.parse(input);
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseRequest();
+  const [firstSubmission, secondSubmission] = await Promise.all([first, second]);
+  assert.equal(fetchCalls, 1);
+  assert.equal(firstSubmission.parseRunId, secondSubmission.parseRunId);
+  assert.equal(firstSubmission.status, 'COMPLETED');
 });

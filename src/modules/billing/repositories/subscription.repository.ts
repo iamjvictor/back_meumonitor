@@ -12,6 +12,27 @@ export class SubscriptionRepository {
   upsertEnrollment(data: Prisma.StudentEnrollmentUncheckedCreateInput) { return prisma.studentEnrollment.upsert({ where: { studentId_monitorId: { studentId: data.studentId, monitorId: data.monitorId } }, create: data, update: data }); }
   findByStudentId(studentId: string) { return prisma.billingSubscription.findFirst({ where: { studentId, status: { in: ['ACTIVE', 'TRIALING'] } }, include: { items: true }, orderBy: { createdAt: 'desc' } }); }
   async findSubscriptionsForUser(userId: string) { const student = await prisma.student.findUnique({ where: { userId }, select: { id: true } }); if (!student) throw new Error('STUDENT_NOT_FOUND'); return prisma.billingSubscription.findMany({ where: { studentId: student.id }, include: { items: { include: { monitor: { select: { id: true, name: true } } } } }, orderBy: { createdAt: 'desc' } }); }
+  async findChangesForUser(userId: string) {
+    const student = await prisma.student.findUnique({ where: { userId }, select: { id: true } });
+    if (!student) throw new Error('STUDENT_NOT_FOUND');
+    const changes = await prisma.billingSubscriptionChange.findMany({
+      where: { studentId: student.id },
+      include: { monitor: { select: { id: true, name: true } }, subscription: { select: { currentPeriodEnd: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return changes.map((change) => {
+      const metadata = change.metadata && typeof change.metadata === 'object' && !Array.isArray(change.metadata) ? change.metadata as { result?: { endsAt?: unknown } } : {};
+      const resultEndsAt = metadata.result?.endsAt;
+      return {
+        id: change.id,
+        type: change.type,
+        monitorId: change.monitorId,
+        monitorName: change.monitor?.name ?? null,
+        createdAt: change.createdAt,
+        endsAt: typeof resultEndsAt === 'string' ? resultEndsAt : change.subscription.currentPeriodEnd,
+      };
+    });
+  }
   findHistoryByStudentId(studentId: string) { return prisma.billingSubscription.findMany({ where: { studentId }, include: { items: true }, orderBy: { createdAt: 'desc' } }); }
   async createActive(data: Prisma.BillingSubscriptionUncheckedCreateInput) {
     const active = await this.findByStudentId(data.studentId);

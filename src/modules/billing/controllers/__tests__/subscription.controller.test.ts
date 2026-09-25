@@ -42,3 +42,12 @@ test('subscription controller maps ownership failure without leaking internals',
   assert.equal(response.payload.error, 'SUBSCRIPTION_NOT_FOUND');
   assert.equal(response.payload.message, 'Não foi possível processar a assinatura.');
 });
+
+test('subscription controller lista o histórico de alterações do aluno', async () => {
+  const controller = new SubscriptionController({}, {
+    findChangesForUser: async (userId: string) => [{ id: 'change-1', userId }],
+  });
+  const response = reply();
+  await controller.history({ id: 'r5', user: { id: 'user-1' } } as any, response as any);
+  assert.deepEqual(response.payload, { data: [{ id: 'change-1', userId: 'user-1' }] });
+});

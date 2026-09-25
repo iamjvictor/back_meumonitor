@@ -10,7 +10,7 @@ export class PrismaChatAccessRepository implements ChatAccessPort {
   constructor(private readonly client: PrismaClient) {}
 
   async resolveChatScope(input: ChatAccessInput): Promise<ChatScope | null> {
-    const [student, subject] = await Promise.all([
+    const [student, subject, teacher] = await Promise.all([
       this.client.student.findUnique({
         where: { userId: input.userId },
         select: { id: true },
@@ -19,9 +19,24 @@ export class PrismaChatAccessRepository implements ChatAccessPort {
         where: { id: input.subjectId, monitorId: input.monitorId },
         select: { id: true, monitor: { select: { teacherId: true } } },
       }),
+      this.client.teacher.findUnique({
+        where: { userId: input.userId },
+        select: { id: true },
+      }),
     ]);
 
-    if (!student || !subject) return null;
+    if (!subject) return null;
+
+    if (teacher && subject.monitor.teacherId === teacher.id) {
+      return {
+        studentId: `teacher-preview:${input.userId}`,
+        teacherId: subject.monitor.teacherId,
+        monitorId: input.monitorId,
+        subjectId: input.subjectId,
+      };
+    }
+
+    if (!student) return null;
 
     const now = new Date();
     const [subscription, enrollment] = await Promise.all([

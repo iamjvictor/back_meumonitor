@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { RegisterTeacherProfileInput } from '../models/teacher-registration.model.js';
+import { mapTeacherStudentSubscription } from './teacher-student.mapper.js';
 
 export class TeacherRepository {
   async createProfile(user: { id: string; email?: string; fullName?: string; whatsapp?: string }, input: RegisterTeacherProfileInput) {
@@ -103,6 +104,48 @@ export class TeacherRepository {
 
   async findByUserId(userId: string) {
     return prisma.teacher.findUnique({ where: { userId } });
+  }
+
+  async findStudentsByUserId(userId: string) {
+    const teacher = await prisma.teacher.findUnique({ where: { userId }, select: { id: true } });
+    if (!teacher) return [];
+
+    const enrollments = await prisma.studentEnrollment.findMany({
+      where: { status: 'ACTIVE', monitor: { teacherId: teacher.id } },
+      select: {
+        status: true,
+        startsAt: true,
+        endsAt: true,
+        student: { select: { id: true, fullName: true, email: true, avatarUrl: true } },
+        monitor: { select: { id: true, name: true, priceCents: true } },
+        subscriptionItem: {
+          select: {
+            finalAmount: true,
+            status: true,
+            currentPeriodEnd: true,
+            subscription: { select: { status: true, billingInterval: true, currentPeriodEnd: true } },
+          },
+        },
+        paymentSubscriptionItem: {
+          select: {
+            status: true,
+            priceCentsSnapshot: true,
+            subscription: { select: { status: true, currentPeriodEnd: true, nextDueDate: true } },
+          },
+        },
+      },
+      orderBy: [{ student: { fullName: 'asc' } }, { startsAt: 'desc' }],
+    });
+
+    const result = enrollments.map(mapTeacherStudentSubscription);
+    console.log('Alunos do professor carregados', {
+      event: 'teacher.students_lookup_completed',
+      userId,
+      teacherId: teacher.id,
+      subscriptionCount: result.length,
+      studentCount: new Set(result.map((item) => item.studentId)).size,
+    });
+    return result;
   }
 
   async findPublicBySlug(pageSlug: string) {

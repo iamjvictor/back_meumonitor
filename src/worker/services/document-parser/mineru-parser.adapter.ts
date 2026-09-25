@@ -46,16 +46,33 @@ export class MineruParserAdapter implements DocumentParserAdapter {
   private readonly requestTimeoutMs: number;
   private readonly logger: BoundaryLogger;
   private readonly inlineResults = new Map<string, LayoutDocument>();
+  private readonly inFlightParses = new Map<string, Promise<ParseSubmission>>();
 
   constructor(options: MineruClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
     this.submitPath = options.submitPath ?? '/v1/parse';
     this.fetchImpl = options.fetchImpl ?? fetch;
-    this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 600_000;
     this.logger = options.logger ?? defaultBoundaryLogger;
   }
 
   async parse(input: ParseInput): Promise<ParseSubmission> {
+    const idempotencyKey = buildIdempotencyKey(input);
+    const inFlight = this.inFlightParses.get(idempotencyKey);
+    if (inFlight) return inFlight;
+
+    const request = this.parseOnce(input);
+    this.inFlightParses.set(idempotencyKey, request);
+    try {
+      return await request;
+    } finally {
+      if (this.inFlightParses.get(idempotencyKey) === request) {
+        this.inFlightParses.delete(idempotencyKey);
+      }
+    }
+  }
+
+  private async parseOnce(input: ParseInput): Promise<ParseSubmission> {
     const form = input.fileBytes
       ? createMultipartBody(input.fileBytes, input.fileName ?? input.originalName ?? inferFileName(input.fileUrl) ?? 'document.pdf', input.mimeType)
       : createMultipartBody(
@@ -69,6 +86,13 @@ export class MineruParserAdapter implements DocumentParserAdapter {
     });
 
     const body = await readJson(response);
+    if (isRecord(body) && body.status === 'failed' && isRecord(body.error)) {
+      throw new DocumentParserAdapterError(
+        typeof body.error.message === 'string' ? body.error.message : 'O parser falhou durante a conversão.',
+        typeof body.error.code === 'string' ? body.error.code : 'PARSER_ERROR',
+        response.status,
+      );
+    }
     const inline = normalizeInlineResponse(body, input);
     if (inline) {
       this.inlineResults.set(inline.parseRunId, inline.result!);
@@ -200,10 +224,16 @@ function createMultipartBody(fileBytes: Uint8Array, fileName: string, mimeType?:
 }
 
 function normalizeInlineResponse(value: unknown, input: ParseInput): ParseSubmission | null {
-  if (!isRecord(value) || !isRecord(value.result) || !isRecord(value.result.layout)) return null;
+  if (!isRecord(value) || !isRecord(value.result)) return null;
   const normalizedStatus = normalizeStatus(value.status);
   if (normalizedStatus !== 'COMPLETED' && normalizedStatus !== 'COMPLETED_WITH_WARNINGS') return null;
-  const rawLayout = value.result.layout as Record<string, unknown>;
+  const rawResult = value.result;
+  const rawLayout = isRecord(rawResult.layout)
+    ? rawResult.layout
+    : isLayoutPayload(rawResult)
+      ? rawResult
+      : null;
+  if (!rawLayout) return null;
   const upstreamParseRunId = typeof value.parseRunId === 'string'
     ? value.parseRunId
     : `docling-${typeof value.inputSha256 === 'string' ? value.inputSha256 : input.contentHash}`;
@@ -237,6 +267,16 @@ function normalizeInlineResponse(value: unknown, input: ParseInput): ParseSubmis
   };
 }
 
+function isLayoutPayload(value: Record<string, unknown>): value is Record<string, unknown> & {
+  schemaVersion: string;
+  pages: unknown[];
+  warnings: unknown[];
+} {
+  return value.schemaVersion === 'docling-layout-v1'
+    && Array.isArray(value.pages)
+    && Array.isArray(value.warnings);
+}
+
 function toPersistableParseRunId(value: string, documentId: string) {
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
     return value;
@@ -245,7 +285,7 @@ function toPersistableParseRunId(value: string, documentId: string) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${((parseInt(hex.slice(16, 18), 16) & 0x3f) | 0x80).toString(16).padStart(2, '0')}${hex.slice(18, 20)}-${hex.slice(20, 32)}`;
 }
 
-type VersionedIdempotencyInput = Pick<ParseInput, 'contentHash' | 'configurationHash' | 'parser' | 'backend'> & {
+type VersionedIdempotencyInput = Pick<ParseInput, 'documentId' | 'contentHash' | 'configurationHash' | 'parser' | 'backend'> & {
   parserVersion?: string;
   modelVersion?: string;
   schemaVersion?: string;
@@ -253,6 +293,7 @@ type VersionedIdempotencyInput = Pick<ParseInput, 'contentHash' | 'configuration
 
 export function buildIdempotencyKey(input: VersionedIdempotencyInput) {
   return [
+    input.documentId,
     input.contentHash,
     input.parser ?? 'MINERU',
     input.parserVersion ?? 'unknown-parser-version',

@@ -1,5 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { studentQuestionAttemptSchema } from '../models/student-question-attempt.model.js';
+import { resetStudentQuestionAttemptsSchema, studentQuestionAttemptSchema } from '../models/student-question-attempt.model.js';
 import { StudentQuestionAttemptService } from '../services/student-question-attempt.service.js';
 
 const errors: Record<string, number> = {
@@ -28,6 +28,19 @@ export class StudentQuestionAttemptController {
     const statusCode = errors[code] ?? 500;
     log('monitor.student_question_attempt_http_failed', { requestId: requestId ?? null, ...errorDetails(error), domainErrorCode: errors[code] ? code : null, statusCode });
     return reply.code(statusCode).send({ error: errors[code] ? code : 'INTERNAL_SERVER_ERROR', message: 'Não foi possível registrar a resposta.', requestId: requestId ?? null });
+  }
+
+  async reset(request: FastifyRequest, reply: FastifyReply) {
+    if (!request.user) return reply.code(401).send({ error: 'UNAUTHENTICATED' });
+    const parsed = resetStudentQuestionAttemptsSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return reply.code(422).send({ error: 'VALIDATION_ERROR', details: parsed.error.flatten() });
+
+    try {
+      const result = await this.service.reset(request.user.id, parsed.data);
+      return reply.send({ data: result });
+    } catch (error) {
+      return this.fail(reply, error, request.id);
+    }
   }
 
   async list(request: FastifyRequest, reply: FastifyReply) {

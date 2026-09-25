@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
+import { mapPaymentOrderHistory, mapSubscriptionCancellationHistory } from './payment-history.mapper.js';
 
 export type StudentPurchaseCreateData = {
   studentId: string;
@@ -20,7 +21,18 @@ function log(event: string, data: Record<string, unknown> = {}) {
 export class StudentPurchaseRepository {
   async findStudentByUserId(userId: string) { const result = await prisma.student.findUnique({ where: { userId }, select: { id: true } }); log('monitor.student_purchase_db_student_lookup_completed', { userId, found: Boolean(result), studentId: result?.id }); return result; }
   async findPublishedMonitors(ids: string[]) { const result = await prisma.monitor.findMany({ where: { id: { in: ids }, status: 'PUBLISHED' }, select: { id: true, name: true } }); log('monitor.student_purchase_db_monitors_lookup_completed', { requestedCount: ids.length, foundCount: result.length }); return result; }
-  async findActiveSubscriptions(studentId: string, ids: string[]) { const result = await prisma.studentSubscription.findMany({ where: { studentId, monitorId: { in: ids }, status: 'active' }, select: { monitorId: true } }); log('monitor.student_purchase_db_active_subscriptions_lookup_completed', { studentId, monitorCount: ids.length, activeCount: result.length }); return result; }
+  async findActiveSubscriptions(studentId: string, ids: string[]) {
+    const [legacy, billing] = await Promise.all([
+      prisma.studentSubscription.findMany({ where: { studentId, monitorId: { in: ids }, status: 'active' }, select: { monitorId: true } }),
+      prisma.billingSubscriptionItem.findMany({
+        where: { monitorId: { in: ids }, status: 'ACTIVE', subscription: { studentId, status: { in: ['ACTIVE', 'TRIALING'] } } },
+        select: { monitorId: true },
+      }),
+    ]);
+    const result = Array.from(new Map([...legacy, ...billing].map((item) => [item.monitorId, item])).values());
+    log('monitor.student_purchase_db_active_subscriptions_lookup_completed', { studentId, monitorCount: ids.length, legacyCount: legacy.length, billingCount: billing.length, activeCount: result.length });
+    return result;
+  }
   async findPurchaseByIdempotencyKey(key: string) { const result = await prisma.studentPurchase.findUnique({ where: { idempotencyKey: key }, include: { items: true } }); log('monitor.student_purchase_db_idempotency_lookup_completed', { found: Boolean(result), purchaseId: result?.id }); return result; }
   async createPurchase(data: StudentPurchaseCreateData) { log('monitor.student_purchase_db_create_started', { studentId: data.studentId, itemCount: data.items.create.length, totalAmount: data.totalAmount }); const result = await prisma.studentPurchase.create({ data: data as unknown as Prisma.StudentPurchaseCreateArgs['data'], include: { items: true } }); log('monitor.student_purchase_db_create_completed', { purchaseId: result.id, status: result.status }); return result; }
   findPurchaseForStudent(id: string, studentId: string) { return prisma.studentPurchase.findFirst({ where: { id, studentId }, include: { items: true } }); }
@@ -100,6 +112,76 @@ export class StudentPurchaseRepository {
       orderBy: { createdAt: 'desc' }
     });
     log('monitor.student_purchase_db_list_purchases_completed', { studentId, count: result.length });
+    return result;
+  }
+
+  async listPaymentHistory(studentId: string) {
+    const [legacyPurchases, paymentOrders, paymentCancellations, billingCancellations] = await Promise.all([
+      this.listPurchases(studentId),
+      prisma.paymentOrder.findMany({
+        where: { studentId },
+        select: {
+          id: true,
+          status: true,
+          grossCents: true,
+          currency: true,
+          createdAt: true,
+          items: { select: { descriptionSnapshot: true } },
+          checkouts: {
+            orderBy: { attempt: 'desc' },
+            take: 1,
+            select: { providerCheckoutId: true },
+          },
+          subscription: {
+            select: {
+              charges: {
+                orderBy: { createdAt: 'desc' },
+                select: {
+                  id: true,
+                  status: true,
+                  grossCents: true,
+                  providerCheckoutId: true,
+                  confirmedAt: true,
+                  receivedAt: true,
+                  createdAt: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.paymentAuditEntry.findMany({
+        where: { studentId, reason: 'STUDENT_REQUESTED_ITEM_CANCELLATION' },
+        select: { id: true, monitorId: true, occurredAt: true, monitor: { select: { name: true } } },
+        orderBy: { occurredAt: 'desc' },
+      }),
+      prisma.billingSubscriptionChange.findMany({
+        where: { studentId, type: { in: ['CANCEL', 'REMOVE'] } },
+        select: { id: true, monitorId: true, createdAt: true, monitor: { select: { name: true } } },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    // Um pedido sem cobrança persistida ainda é apenas uma tentativa local de checkout.
+    // Ele não deve aparecer para o aluno como compra até o Asaas confirmar a cobrança.
+    const asaasEntries = paymentOrders
+      .filter((order) => (order.subscription?.charges.length ?? 0) > 0)
+      .flatMap(mapPaymentOrderHistory);
+    const cancellationEntries = [
+      ...paymentCancellations.map((entry) => mapSubscriptionCancellationHistory({ id: entry.id, monitorId: entry.monitorId, monitorName: entry.monitor?.name ?? null, createdAt: entry.occurredAt, source: 'ASAAS' })),
+      ...billingCancellations.map((entry) => mapSubscriptionCancellationHistory({ id: entry.id, monitorId: entry.monitorId, monitorName: entry.monitor?.name ?? null, createdAt: entry.createdAt, source: 'BILLING' })),
+    ];
+    const result = [...legacyPurchases, ...asaasEntries, ...cancellationEntries].sort(
+      (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+    );
+    log('monitor.student_payment_history_completed', {
+      studentId,
+      legacyCount: legacyPurchases.length,
+      asaasCount: asaasEntries.length,
+      cancellationCount: cancellationEntries.length,
+      totalCount: result.length,
+    });
     return result;
   }
 }

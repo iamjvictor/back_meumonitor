@@ -29,13 +29,28 @@ export type StudentFlashcardPerformanceRow = {
   lastReviewedAt: string | null;
 };
 
+export type PerformanceWindow = {
+  from: Date;
+  to: Date;
+};
+
 export class StudentPerformanceRepository {
   async findStudentByUserId(userId: string) {
     return prisma.student.findUnique({ where: { userId }, select: { id: true } });
   }
 
-  async aggregateByScope(studentId: string, monitorIds: string[]): Promise<StudentPerformanceRow[]> {
+  async aggregateByScope(
+    studentId: string,
+    monitorIds: string[],
+    mode: 'PRACTICE' | 'SIMULATED' | 'DAILY_CHALLENGE' = 'PRACTICE',
+    window?: PerformanceWindow,
+  ): Promise<StudentPerformanceRow[]> {
     if (monitorIds.length === 0) return [];
+    if (window && window.from > window.to) throw new Error('INVALID_PERFORMANCE_WINDOW');
+
+    const answeredAtWindow = window
+      ? Prisma.sql`AND attempts.answered_at >= ${window.from} AND attempts.answered_at <= ${window.to}`
+      : Prisma.empty;
 
     return prisma.$queryRaw<StudentPerformanceRow[]>`
       SELECT
@@ -55,13 +70,56 @@ export class StudentPerformanceRepository {
       LEFT JOIN monitor_topics AS topics ON topics.id = questions.topic_id
       WHERE attempts.student_id = ${studentId}::uuid
         AND attempts.monitor_id IN (${Prisma.join(monitorIds)})
+        AND attempts.mode = ${mode}::"StudentQuestionAttemptMode"
+        AND questions.status = 'APPROVED'::"QuestionStatus"
+        ${answeredAtWindow}
       GROUP BY m.id, m.name, subjects.id, subjects.name, topics.id, topics.name
       ORDER BY m.name ASC, subjects.name ASC, topics.name ASC NULLS LAST
     `;
   }
 
-  async aggregateFlashcardByScope(studentId: string, monitorIds: string[]): Promise<StudentFlashcardPerformanceRow[]> {
+  async aggregateWeeklySimulationByScope(
+    studentId: string,
+    monitorIds: string[],
+  ): Promise<StudentPerformanceRow[]> {
     if (monitorIds.length === 0) return [];
+
+    return prisma.$queryRaw<StudentPerformanceRow[]>`
+      SELECT
+        m.id AS "monitorId",
+        m.name AS "monitorName",
+        subjects.id AS "subjectId",
+        subjects.name AS "subjectName",
+        topics.id AS "topicId",
+        topics.name AS "topicName",
+        COUNT(items.id)::int AS "answeredCount",
+        COUNT(*) FILTER (WHERE items.is_correct = true)::int AS "correctCount",
+        MAX(items.answered_at)::text AS "lastAnsweredAt"
+      FROM weekly_simulation_items AS items
+      INNER JOIN weekly_simulations AS simulations ON simulations.id = items.simulation_id
+      INNER JOIN monitors AS m ON m.id = simulations.monitor_id
+      INNER JOIN monitor_subjects AS subjects ON subjects.id = items.subject_id
+      LEFT JOIN monitor_topics AS topics ON topics.id = items.topic_id
+      WHERE simulations.student_id = ${studentId}::uuid
+        AND simulations.monitor_id IN (${Prisma.join(monitorIds)})
+        AND simulations.status = 'COMPLETED'::"WeeklySimulationStatus"
+        AND items.answered_at IS NOT NULL
+      GROUP BY m.id, m.name, subjects.id, subjects.name, topics.id, topics.name
+      ORDER BY m.name ASC, subjects.name ASC, topics.name ASC NULLS LAST
+    `;
+  }
+
+  async aggregateFlashcardByScope(
+    studentId: string,
+    monitorIds: string[],
+    window?: PerformanceWindow,
+  ): Promise<StudentFlashcardPerformanceRow[]> {
+    if (monitorIds.length === 0) return [];
+    if (window && window.from > window.to) throw new Error('INVALID_PERFORMANCE_WINDOW');
+
+    const reviewedAtWindow = window
+      ? Prisma.sql`AND logs.reviewed_at >= ${window.from} AND logs.reviewed_at <= ${window.to}`
+      : Prisma.empty;
 
     return prisma.$queryRaw<StudentFlashcardPerformanceRow[]>`
       SELECT
@@ -85,6 +143,8 @@ export class StudentPerformanceRepository {
       LEFT JOIN monitor_topics AS topics ON topics.id = f.topic_id
       WHERE logs.student_id = ${studentId}::uuid
         AND f.monitor_id IN (${Prisma.join(monitorIds)})
+        AND f.status = 'APPROVED'::"FlashcardStatus"
+        ${reviewedAtWindow}
       GROUP BY m.id, m.name, subjects.id, subjects.name, topics.id, topics.name
       ORDER BY m.name ASC, subjects.name ASC, topics.name ASC NULLS LAST
     `;
@@ -99,15 +159,14 @@ export class StudentPerformanceRepository {
         where: {
           studentId,
           nextReviewAt: { lte: now },
-          flashcard: { monitorId: { in: monitorIds } },
+          flashcard: { status: 'APPROVED', monitorId: { in: monitorIds } },
         },
       }),
       prisma.flashcard.count({
-        where: { monitorId: { in: monitorIds } },
+        where: { status: 'APPROVED', monitorId: { in: monitorIds } },
       }),
     ]);
 
     return { dueCount, totalCardsCount };
   }
 }
-

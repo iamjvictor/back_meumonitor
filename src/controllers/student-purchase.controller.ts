@@ -11,6 +11,7 @@ type StudentPurchaseServicePort = {
   simulatedCheckout(userId: string, purchaseId: string): Promise<unknown>;
   simulatedConfirmation(userId: string, purchaseId: string, sessionId: string): Promise<unknown>;
   listPurchases(userId: string): Promise<unknown>;
+  listPaymentHistory(userId: string): Promise<unknown>;
   listSubscriptions(userId: string): Promise<unknown>;
 };
 
@@ -89,6 +90,12 @@ export class StudentPurchaseController {
   async purchases(request: PurchaseRequest<unknown>, reply: FastifyReply) {
     const userId = this.requireUser(request);
     try { return reply.send({ data: await this.service.listPurchases(userId) }); }
+    catch (error) { throw this.domainError(error); }
+  }
+
+  async paymentHistory(request: PurchaseRequest<unknown>, reply: FastifyReply) {
+    const userId = this.requireUser(request);
+    try { return reply.send({ data: await this.service.listPaymentHistory(userId) }); }
     catch (error) { throw this.domainError(error); }
   }
 

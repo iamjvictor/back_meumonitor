@@ -25,13 +25,24 @@ export class DailyChallengeRepository {
   }
 
   findCurrentForStudent(monitorId: string, challengeDate: string, studentId: string) {
-    return prisma.dailyChallenge.findUnique({
-      where: { monitorId_challengeDate: { monitorId, challengeDate: new Date(`${challengeDate}T00:00:00.000Z`) } },
+    return prisma.dailyChallenge.findFirst({
+      where: {
+        monitorId,
+        challengeDate: new Date(`${challengeDate}T00:00:00.000Z`),
+        question: { status: 'APPROVED' },
+      },
       include: {
         question: { include: { subject: true, topic: true } },
         attempts: { where: { studentId }, select: { id: true, isCorrect: true, answeredAt: true } },
       },
     });
+  }
+
+  async isMonitorOwner(userId: string, monitorId: string): Promise<boolean> {
+    const teacher = await prisma.teacher.findUnique({ where: { userId }, select: { id: true } });
+    if (!teacher) return false;
+    const monitor = await prisma.monitor.findFirst({ where: { id: monitorId, teacherId: teacher.id }, select: { id: true } });
+    return Boolean(monitor);
   }
 
   findStudentByUserId(userId: string) {

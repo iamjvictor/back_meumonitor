@@ -51,7 +51,13 @@ export class SubscriptionService {
     const activeCount = subscription.items.filter((candidate: { monitorId: string; status: string }) => candidate.status === 'ACTIVE' && candidate.monitorId !== monitorId).length;
     const amount = this.total(activeCount, subscription.billingInterval as BillingInterval);
     log('monitor.billing_subscription_remove_started', { userId, billingSubscriptionId, monitorId, effectiveAt: 'PERIOD_END', activeCount });
-    try { await this.provider.updateSubscription({ subscriptionId: subscription.providerSubscriptionId, amount, interval: subscription.billingInterval, effectiveAt: 'PERIOD_END' }); if (activeCount === 0) await this.provider.cancelSubscription({ subscriptionId: subscription.providerSubscriptionId, atPeriodEnd: true }); }
+    try {
+      if (activeCount === 0) {
+        await this.provider.cancelSubscription({ subscriptionId: subscription.providerSubscriptionId, atPeriodEnd: true });
+      } else {
+        await this.provider.updateSubscription({ subscriptionId: subscription.providerSubscriptionId, amount, interval: subscription.billingInterval, effectiveAt: 'PERIOD_END' });
+      }
+    }
     catch (error) { log('monitor.billing_subscription_remove_failed', { userId, billingSubscriptionId, monitorId, stage: 'provider', error: error instanceof Error ? error.message : 'unknown' }); throw error; }
     const result = { subscriptionId: subscription.id, status: 'PENDING_REMOVAL', endsAt: periodEnd };
     try { await this.repo.markItemPendingRemoval(item.id, { status: 'PENDING_REMOVAL', currentPeriodEnd: periodEnd }); await this.repo.markEnrollmentPendingRemoval(student.id, monitorId, { status: 'PENDING_REMOVAL', endsAt: periodEnd }); await this.repo.updateSubscriptionTotals(subscription.id, { subtotalAmount: amount, totalAmount: amount, cancelAtPeriodEnd: activeCount === 0 }); await this.recordChange({ subscriptionId: subscription.id, studentId: student.id, type: 'REMOVE', monitorId, amount, operationKey, metadata: { operation: 'REMOVE', monitorId, result } }); }

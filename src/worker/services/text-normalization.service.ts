@@ -49,6 +49,10 @@ function normalizedLine(value: string) {
   return value.replace(/[ \t]+/g, ' ').trim();
 }
 
+export function removeNullCharacters(content: string) {
+  return content.replace(/\u0000/g, '');
+}
+
 const PREFIXED_DIACRITICS: Record<string, string> = {
   '´': '\u0301',
   '`': '\u0300',
@@ -124,6 +128,11 @@ export class TextNormalizationService {
     const maxSampleLength = options.maxSampleLength ?? DEFAULT_MAX_SAMPLE_LENGTH;
     const repeatedPageLines = options.repeatedPageLines ?? [];
     let content = text;
+
+    content = content.replace(/\u0000/g, (match) => {
+      addRule(rules, 'REMOVE_NULL_CHARACTER', match, '', maxSamples, maxSampleLength);
+      return '';
+    });
 
     content = repairPrefixedDiacritics(content, rules, maxSamples, maxSampleLength);
 

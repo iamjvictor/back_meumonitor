@@ -51,7 +51,15 @@ test('adiciona dois monitores na mesma assinatura agregada', async () => {
 });
 
 test('remove monitor mantém enrollment e item pendentes até o fim do período', async () => {
-  const { service, calls, repo } = setup();
+  const { service, calls, repo } = setup({
+    findSubscriptionForStudent: async () => ({
+      ...subscription,
+      items: [
+        ...subscription.items,
+        { id: 'item-2', monitorId: 'monitor-2', status: 'ACTIVE', amountBeforeDiscount: 2000, discountAmount: 0, finalAmount: 2000 },
+      ],
+    }),
+  });
   const result = await service.removeMonitor(student.id, subscription.id, 'monitor-1');
   assert.equal(result.status, 'PENDING_REMOVAL');
   assert.equal(result.endsAt.toISOString(), subscription.currentPeriodEnd.toISOString());
@@ -64,8 +72,9 @@ test('remove monitor mantém enrollment e item pendentes até o fim do período'
 test('remoção do último monitor agenda cancelamento agregado', async () => {
   const { service, calls } = setup({ countActiveItems: async () => 1 });
   await service.removeMonitor(student.id, subscription.id, 'monitor-1');
-  const cancel = calls[1];
-  assert.deepEqual(cancel, { method: 'cancelSubscription', input: { subscriptionId: 'sim-sub-1', atPeriodEnd: true } });
+  assert.deepEqual(calls, [
+    { method: 'cancelSubscription', input: { subscriptionId: 'sim-sub-1', atPeriodEnd: true } },
+  ]);
 });
 
 test('altera MONTH para YEAR recalculando o total e preservando a assinatura', async () => {

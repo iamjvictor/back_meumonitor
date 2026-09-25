@@ -79,16 +79,10 @@ export class DocumentParseOrchestratorService {
         attempt,
       });
       try {
-        const parsePromise = this.adapter.parse(input);
-        submission = this.parseTimeoutMs
-          ? await Promise.race([
-            parsePromise,
-            new Promise<never>((_, reject) => setTimeout(
-              () => reject(new DocumentParserAdapterError('parse timeout', 'PARSER_TIMEOUT')),
-              this.parseTimeoutMs,
-            )),
-          ])
-          : await parsePromise;
+        submission = await withTimeout(
+          this.adapter.parse(input),
+          this.parseTimeoutMs,
+        );
         this.logger('docling_orchestrator.parse_attempt_finished', {
           documentId: input.documentId,
           idempotencyKey,
@@ -191,6 +185,25 @@ export class DocumentParseOrchestratorService {
       updatedAt: this.now().toISOString(),
     });
     return canonicalLayout;
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs?: number): Promise<T> {
+  if (!timeoutMs) return promise;
+
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(
+          () => reject(new DocumentParserAdapterError('parse timeout', 'PARSER_TIMEOUT')),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
   }
 }
 

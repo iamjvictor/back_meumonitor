@@ -1,20 +1,22 @@
 import { z } from 'zod';
 
 const labels = ['A', 'B', 'C', 'D', 'E'] as const;
+const MAX_ALTERNATIVE_TEXT_CHARS = 500;
+const MAX_EVIDENCE_CHARS = 300;
 
 const alternativeJsonSchema = {
   type: 'object',
   additionalProperties: false,
   properties: {
     label: { type: 'string', enum: labels },
-    text: { type: 'string', minLength: 1, maxLength: 180 },
+    text: { type: 'string', minLength: 1, maxLength: MAX_ALTERNATIVE_TEXT_CHARS },
   },
   required: ['label', 'text'],
 } as const;
 
 const alternativeZodSchema = z.object({
   label: z.enum(labels),
-  text: z.string().min(1).max(180),
+  text: z.string().min(1).max(MAX_ALTERNATIVE_TEXT_CHARS),
 }).strict();
 
 export const questionCompletionJsonSchema = {
@@ -83,7 +85,7 @@ export const questionQualityReviewJsonSchema = {
     score: { type: 'integer', minimum: 0, maximum: 100 },
     severity: { type: 'string', enum: ['INFO', 'WARNING', 'CRITICAL'] },
     confidence: { type: 'number', minimum: 0, maximum: 1 },
-    reasons: { type: 'array', maxItems: 8, items: { type: 'string', minLength: 1, maxLength: 180 } },
+    reasons: { type: 'array', maxItems: 8, items: { type: 'string', minLength: 1, maxLength: MAX_EVIDENCE_CHARS } },
     recommendedAction: { type: 'string', enum: ['REVIEW', 'CORRECT', 'REPROCESS', 'DUPLICATE', 'KEEP'] },
   },
   required: ['valid', 'score', 'severity', 'confidence', 'reasons', 'recommendedAction'],
@@ -136,7 +138,7 @@ export const questionQualityNormalizationJsonSchema = {
       },
       required: ['statementMakesSense', 'alternativesMatchStatement', 'answerMatchesAlternative', 'explanationMatchesAnswer', 'solvable'],
     },
-    evidence: { type: 'array', maxItems: 5, items: { type: 'string', minLength: 1, maxLength: 180 } },
+    evidence: { type: 'array', maxItems: 5, items: { type: 'string', minLength: 1, maxLength: MAX_EVIDENCE_CHARS } },
   },
   required: ['decision', 'confidence', 'changes', 'fieldActions', 'checks', 'evidence'],
 } as const;
@@ -156,7 +158,7 @@ export const questionSourceReconstructionJsonSchema = {
     changes: { type: 'object', additionalProperties: false, properties: questionPatchProperties, required: questionPatchRequired },
     changed: { type: 'boolean' },
     confidence: { type: 'number', minimum: 0, maximum: 1 },
-    evidence: { type: 'array', maxItems: 4, items: { type: 'string', minLength: 1, maxLength: 160 } },
+    evidence: { type: 'array', maxItems: 4, items: { type: 'string', minLength: 1, maxLength: MAX_EVIDENCE_CHARS } },
     recommendedAction: { type: 'string', enum: ['REVIEW', 'REPROCESS', 'KEEP'] },
   },
   required: ['changes', 'changed', 'confidence', 'evidence', 'recommendedAction'],
@@ -169,7 +171,7 @@ export const questionQualityCorrectionJsonSchema = {
     action: { type: 'string', enum: ['CORRECT', 'REPROCESS', 'REVIEW'] },
     changes: { type: 'object', additionalProperties: false, properties: questionPatchProperties, required: questionPatchRequired },
     confidence: { type: 'number', minimum: 0, maximum: 1 },
-    evidence: { type: 'array', maxItems: 4, items: { type: 'string', minLength: 1, maxLength: 160 } },
+    evidence: { type: 'array', maxItems: 4, items: { type: 'string', minLength: 1, maxLength: MAX_EVIDENCE_CHARS } },
   },
   required: ['action', 'changes', 'confidence', 'evidence'],
 } as const;
@@ -205,7 +207,7 @@ export const questionQualityReviewZodSchema = z.object({
   score: z.number().int().min(0).max(100),
   severity: z.enum(['INFO', 'WARNING', 'CRITICAL']),
   confidence: z.number().min(0).max(1),
-  reasons: z.array(z.string().min(1).max(180)).max(8),
+  reasons: z.array(z.string().min(1).max(MAX_EVIDENCE_CHARS)).max(8),
   recommendedAction: z.enum(['REVIEW', 'CORRECT', 'REPROCESS', 'DUPLICATE', 'KEEP']),
 }).strict();
 
@@ -226,7 +228,7 @@ export const questionQualityNormalizationZodSchema = z.object({
     explanationMatchesAnswer: z.boolean(),
     solvable: z.boolean(),
   }).strict(),
-  evidence: z.array(z.string().min(1).max(180)).max(5),
+  evidence: z.array(z.string().min(1).max(MAX_EVIDENCE_CHARS)).max(5),
 }).strict();
 
 export const questionBoundaryZodSchema = z.object({
@@ -240,7 +242,7 @@ export const questionSourceReconstructionZodSchema = z.object({
   changes: questionPatchZodSchema,
   changed: z.boolean(),
   confidence: z.number().min(0).max(1),
-  evidence: z.array(z.string().min(1).max(160)).max(4),
+  evidence: z.array(z.string().min(1).max(MAX_EVIDENCE_CHARS)).max(4),
   recommendedAction: z.enum(['REVIEW', 'REPROCESS', 'KEEP']),
 }).strict();
 
@@ -248,5 +250,5 @@ export const questionQualityCorrectionZodSchema = z.object({
   action: z.enum(['CORRECT', 'REPROCESS', 'REVIEW']),
   changes: questionPatchZodSchema,
   confidence: z.number().min(0).max(1),
-  evidence: z.array(z.string().min(1).max(160)).max(4),
+  evidence: z.array(z.string().min(1).max(MAX_EVIDENCE_CHARS)).max(4),
 }).strict();

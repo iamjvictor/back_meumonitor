@@ -3,6 +3,7 @@ import { loginSchema } from '../models/login.model.js';
 import { LoginRepositoryError } from '../repositories/login.repository.js';
 import { LoginService } from '../services/login.service.js';
 import { AppError } from '../core/errors/app-error.js';
+import { sessionCookieOptions } from './session-cookie-options.js';
 
 export class LoginController {
   constructor(private readonly service: LoginService) {}
@@ -30,19 +31,16 @@ export class LoginController {
 
     try {
       const login = await this.service.execute(result.data);
+      const cookieOptions = sessionCookieOptions(request);
 
       reply.setCookie('mm_access_token', login.session.accessToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        path: '/',
+        ...cookieOptions,
         maxAge: login.session.expiresIn,
       });
       reply.setCookie('mm_refresh_token', login.session.refreshToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        path: '/',
+        ...cookieOptions,
         maxAge: 60 * 60 * 24 * 30,
       });
 
@@ -52,7 +50,7 @@ export class LoginController {
         userId: login.userId,
       });
 
-      const { session: _session, ...publicLogin } = login;
+      const { session, ...publicLogin } = login;
       console.log('Login finalizado', {
         event: 'auth.login.completed',
         requestId: request.id,
@@ -60,7 +58,7 @@ export class LoginController {
         role: login.role,
         durationMs: Date.now() - startedAt,
       });
-      return reply.code(200).send({ data: publicLogin });
+      return reply.code(200).send({ data: { ...publicLogin, accessToken: session.accessToken } });
     } catch (error) {
       if (error instanceof LoginRepositoryError) {
         const isEmailNotConfirmed =

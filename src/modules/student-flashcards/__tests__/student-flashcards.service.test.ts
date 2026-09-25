@@ -83,3 +83,34 @@ test('rejeita monitor solicitado sem acesso', async () => {
 
   await assert.rejects(service.getRandomFlashcard({ userId: 'user-1', monitorId: 'monitor-2' }), /MONITOR_NOT_ACCESSIBLE/);
 });
+
+test('propaga matéria e tópico ao selecionar flashcard', async () => {
+  const filters: Array<{ subjectId?: string; topicId?: string }> = [];
+  const service = createStudentFlashcardsService({
+    access: {
+      async assertMonitorAccess() { return { studentId: 'student-1' }; },
+    },
+    repository: {
+      async findFlashcard() { return null; },
+      async findProgress() { return null; },
+      async saveProgress(input) { return input; },
+      async createReviewLog() {},
+      async findDueCards(input) { filters.push(input); return []; },
+      async findUnreviewedCards(input) { filters.push(input); return []; },
+      async findFallbackCards(input) { filters.push(input); return []; },
+    },
+  });
+
+  await assert.rejects(service.getRandomFlashcard({
+    userId: 'user-1',
+    monitorId: 'monitor-1',
+    subjectId: 'subject-1',
+    topicId: 'topic-1',
+  }), /NO_FLASHCARDS_FOUND/);
+
+  assert.deepEqual(filters, [
+    { studentId: 'student-1', monitorIds: ['monitor-1'], subjectId: 'subject-1', topicId: 'topic-1' },
+    { studentId: 'student-1', monitorIds: ['monitor-1'], subjectId: 'subject-1', topicId: 'topic-1' },
+    { monitorIds: ['monitor-1'], subjectId: 'subject-1', topicId: 'topic-1' },
+  ]);
+});

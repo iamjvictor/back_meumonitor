@@ -7,51 +7,81 @@ datasource db {
 }
 
 model Teacher {
-  id                    String                 @id @default(uuid()) @db.Uuid
-  userId                String                 @unique @map("user_id") @db.Uuid
-  fullName              String                 @map("full_name")
-  email                 String
-  phone                 String?
-  username              String                 @unique
-  area                  String
-  customArea            String?                @map("custom_area")
-  bio                   String?
-  pageSlug              String                 @unique @map("page_slug")
-  avatarUrl             String?                @map("avatar_url")
-  bannerUrl             String?                @map("banner_url")
-  instagram             String?
-  tiktok                String?
-  youtube               String?
-  role                  String                 @default("teacher")
-  emailVerified         Boolean                @default(false) @map("email_verified")
-  status                String                 @default("pending")
-  termsAcceptedAt       DateTime               @map("terms_accepted_at")
-  createdAt             DateTime               @default(now()) @map("created_at")
-  updatedAt             DateTime               @updatedAt @map("updated_at")
-  monitors              Monitor[]
-  documents             MonitorDocument[]
-  chunks                DocumentChunk[]
-  questions             Question[]
-  flashcards            Flashcard[]
-  questionAiGenerations QuestionAiGeneration[]
-  retrievalEvalCases    RetrievalEvalCase[]
+  id                       String                    @id @default(uuid()) @db.Uuid
+  userId                   String                    @unique @map("user_id") @db.Uuid
+  fullName                 String                    @map("full_name")
+  email                    String
+  phone                    String?
+  username                 String                    @unique
+  area                     String
+  customArea               String?                   @map("custom_area")
+  bio                      String?
+  pageSlug                 String                    @unique @map("page_slug")
+  avatarUrl                String?                   @map("avatar_url")
+  bannerUrl                String?                   @map("banner_url")
+  instagram                String?
+  tiktok                   String?
+  youtube                  String?
+  role                     String                    @default("teacher")
+  emailVerified            Boolean                   @default(false) @map("email_verified")
+  status                   String                    @default("pending")
+  termsAcceptedAt          DateTime                  @map("terms_accepted_at")
+  teacherPercentage        Decimal                   @default(50) @map("teacher_percentage") @db.Decimal(7, 4)
+  currentPaymentAccountId  String?                   @map("current_payment_account_id") @db.Uuid
+  createdAt                DateTime                  @default(now()) @map("created_at")
+  updatedAt                DateTime                  @updatedAt @map("updated_at")
+  referralsMade            TeacherReferral[]         @relation("IndicatorTeacher")
+  referralReceived         TeacherReferral?          @relation("ReferredTeacher")
+  paymentAccounts          PaymentAccount[]          @relation("TeacherPaymentAccounts")
+  credentialOperations     PaymentAccountCredentialOperation[]
+  paymentProfiles          TeacherPaymentProfile[]
+  currentPaymentAccount    PaymentAccount?           @relation("TeacherCurrentPaymentAccount", fields: [currentPaymentAccountId], references: [id], onDelete: SetNull)
+  paymentOrderItems        PaymentOrderItem[]
+  paymentSubscriptionItems PaymentSubscriptionItem[]
+  paymentAuditEntries      PaymentAuditEntry[]
+  monitors                 Monitor[]
+  documents                MonitorDocument[]
+  chunks                   DocumentChunk[]
+  questions                Question[]
+  flashcards               Flashcard[]
+  questionAiGenerations    QuestionAiGeneration[]
+  retrievalEvalCases       RetrievalEvalCase[]
 
   @@index([userId])
   @@index([status])
   @@map("teachers")
 }
 
+model TeacherReferral {
+  id                 String   @id @default(uuid()) @db.Uuid
+  referredTeacherId  String   @unique @map("referred_teacher_id") @db.Uuid
+  indicatorTeacherId String   @map("indicator_teacher_id") @db.Uuid
+  percentage         Decimal  @map("percentage") @db.Decimal(7, 4)
+  status             String   @default("ACTIVE")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  referredTeacher  Teacher @relation("ReferredTeacher", fields: [referredTeacherId], references: [id], onDelete: Restrict)
+  indicatorTeacher Teacher @relation("IndicatorTeacher", fields: [indicatorTeacherId], references: [id], onDelete: Restrict)
+
+  @@index([indicatorTeacherId])
+  @@index([status])
+  @@map("teacher_referrals")
+}
+
 model Monitor {
-  id                  String        @id @default(uuid()) @db.Uuid
-  teacherId           String        @map("teacher_id") @db.Uuid
-  name                String
-  description         String?
-  avatarUrl           String?       @map("avatar_url")
-  detailedDescription String?       @map("detailed_description") @db.Text
-  status              MonitorStatus @default(DRAFT)
-  publishedAt         DateTime?     @map("published_at")
-  createdAt           DateTime      @default(now()) @map("created_at")
-  updatedAt           DateTime      @updatedAt @map("updated_at")
+  id                                String        @id @default(uuid()) @db.Uuid
+  teacherId                         String        @map("teacher_id") @db.Uuid
+  name                              String
+  description                       String?
+  avatarUrl                         String?       @map("avatar_url")
+  detailedDescription               String?       @map("detailed_description") @db.Text
+  priceCents                        Int           @default(5990) @map("price_cents")
+  allowPublishWithoutPaymentAccount Boolean       @default(false) @map("allow_publish_without_payment_account")
+  status                            MonitorStatus @default(DRAFT)
+  publishedAt                       DateTime?     @map("published_at")
+  createdAt                         DateTime      @default(now()) @map("created_at")
+  updatedAt                         DateTime      @updatedAt @map("updated_at")
 
   teacher                    Teacher                     @relation(fields: [teacherId], references: [id], onDelete: Cascade)
   subjects                   MonitorSubject[]
@@ -67,6 +97,10 @@ model Monitor {
   billingSubscriptionChanges BillingSubscriptionChange[]
   dailyChallenges            DailyChallenge[]
   questionAttempts           StudentQuestionAttempt[]
+  weeklySimulations          WeeklySimulation[]
+  paymentOrderItems          PaymentOrderItem[]
+  paymentSubscriptionItems   PaymentSubscriptionItem[]
+  paymentAuditEntries        PaymentAuditEntry[]
 
   @@index([teacherId, status])
   @@map("monitors")
@@ -80,13 +114,14 @@ model MonitorSubject {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  monitor            Monitor             @relation(fields: [monitorId], references: [id], onDelete: Cascade)
-  topics             MonitorTopic[]
-  documents          MonitorDocument[]
-  chunks             DocumentChunk[]
-  questions          Question[]
-  flashcards         Flashcard[]
-  retrievalEvalCases RetrievalEvalCase[]
+  monitor               Monitor                @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  topics                MonitorTopic[]
+  documents             MonitorDocument[]
+  chunks                DocumentChunk[]
+  questions             Question[]
+  flashcards            Flashcard[]
+  retrievalEvalCases    RetrievalEvalCase[]
+  weeklySimulationItems WeeklySimulationItem[]
 
   @@unique([monitorId, name])
   @@unique([monitorId, position])
@@ -112,18 +147,82 @@ model MonitorTopic {
   createdAt                DateTime  @default(now()) @map("created_at")
   updatedAt                DateTime  @updatedAt @map("updated_at")
 
-  subject            MonitorSubject         @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  documents          MonitorDocument[]
-  documentLinks      MonitorDocumentTopic[]
-  chunkLinks         DocumentChunkTopic[]
-  questions          Question[]
-  flashcards         Flashcard[]
-  questionTopicLinks QuestionTopic[]
-  blockTopicLinks    DocumentBlockTopic[]
+  subject                MonitorSubject                 @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  documents              MonitorDocument[]
+  documentLinks          MonitorDocumentTopic[]
+  chunkLinks             DocumentChunkTopic[]
+  questions              Question[]
+  flashcards             Flashcard[]
+  questionTopicLinks     QuestionTopic[]
+  blockTopicLinks        DocumentBlockTopic[]
+  weeklySimulationItems  WeeklySimulationItem[]
+  questionBankSelections MonitorQuestionBankSelection[]
+  subtopics              MonitorSubtopic[]
 
   @@unique([subjectId, name])
   @@unique([subjectId, position])
   @@map("monitor_topics")
+}
+
+model MonitorSubtopic {
+  id             String   @id @default(uuid()) @db.Uuid
+  monitorTopicId String   @map("monitor_topic_id") @db.Uuid
+  name           String
+  position       Int
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  monitorTopic           MonitorTopic                   @relation(fields: [monitorTopicId], references: [id], onDelete: Cascade)
+  subsubtopics           MonitorSubsubtopic[]
+  questions              Question[]
+  questionBankSelections MonitorQuestionBankSelection[]
+
+  @@unique([monitorTopicId, name])
+  @@unique([monitorTopicId, position])
+  @@index([monitorTopicId])
+  @@map("monitor_subtopics")
+}
+
+model MonitorSubsubtopic {
+  id                String   @id @default(uuid()) @db.Uuid
+  monitorSubtopicId String   @map("monitor_subtopic_id") @db.Uuid
+  name              String
+  position          Int
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  monitorSubtopic        MonitorSubtopic                @relation(fields: [monitorSubtopicId], references: [id], onDelete: Cascade)
+  questions              Question[]
+  questionBankSelections MonitorQuestionBankSelection[]
+
+  @@unique([monitorSubtopicId, name])
+  @@unique([monitorSubtopicId, position])
+  @@index([monitorSubtopicId])
+  @@map("monitor_subsubtopics")
+}
+
+model MonitorQuestionBankSelection {
+  id                   String   @id @default(uuid()) @db.Uuid
+  monitorTopicId       String   @map("monitor_topic_id") @db.Uuid
+  monitorSubtopicId    String?  @map("monitor_subtopic_id") @db.Uuid
+  monitorSubsubtopicId String?  @map("monitor_subsubtopic_id") @db.Uuid
+  examType             String   @map("exam_type")
+  board                String?
+  subtopic             String?
+  subsubtopic          String?
+  selectionKey         String   @map("selection_key")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  monitorTopic       MonitorTopic        @relation(fields: [monitorTopicId], references: [id], onDelete: Cascade)
+  monitorSubtopic    MonitorSubtopic?    @relation(fields: [monitorSubtopicId], references: [id], onDelete: Cascade)
+  monitorSubsubtopic MonitorSubsubtopic? @relation(fields: [monitorSubsubtopicId], references: [id], onDelete: Cascade)
+
+  @@unique([monitorTopicId, selectionKey])
+  @@index([monitorSubtopicId])
+  @@index([monitorSubsubtopicId])
+  @@index([monitorTopicId, examType, board])
+  @@map("monitor_question_bank_selections")
 }
 
 model MonitorDocument {
@@ -524,10 +623,13 @@ model DocumentChunk {
 
 model Question {
   id                      String                       @id @default(uuid()) @db.Uuid
+  questionBankItemId      String?                      @map("question_bank_item_id") @db.Uuid
   teacherId               String                       @map("teacher_id") @db.Uuid
   monitorId               String                       @map("monitor_id") @db.Uuid
   subjectId               String                       @map("subject_id") @db.Uuid
   topicId                 String?                      @map("topic_id") @db.Uuid
+  subtopicId              String?                      @map("subtopic_id") @db.Uuid
+  subsubtopicId           String?                      @map("subsubtopic_id") @db.Uuid
   text                    String
   alternatives            Json
   kind                    QuestionKind                 @default(UNKNOWN)
@@ -562,20 +664,68 @@ model Question {
   createdAt               DateTime                     @default(now()) @map("created_at")
   updatedAt               DateTime                     @updatedAt @map("updated_at")
 
-  teacher          Teacher                  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
-  monitor          Monitor                  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
-  subject          MonitorSubject           @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  topic            MonitorTopic?            @relation(fields: [topicId], references: [id], onDelete: Cascade)
-  sources          QuestionSource[]
-  topicLinks       QuestionTopic[]
-  contentReports   StudentContentReport[]
-  aiGenerations    QuestionAiGeneration[]
-  dailyChallenges  DailyChallenge[]
-  questionAttempts StudentQuestionAttempt[]
+  teacher               Teacher                  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  monitor               Monitor                  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  subject               MonitorSubject           @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  topic                 MonitorTopic?            @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  subtopic              MonitorSubtopic?         @relation(fields: [subtopicId], references: [id], onDelete: SetNull)
+  subsubtopic           MonitorSubsubtopic?      @relation(fields: [subsubtopicId], references: [id], onDelete: SetNull)
+  questionBankItem      QuestionBankItem?        @relation(fields: [questionBankItemId], references: [id], onDelete: Restrict)
+  sources               QuestionSource[]
+  topicLinks            QuestionTopic[]
+  contentReports        StudentContentReport[]
+  aiGenerations         QuestionAiGeneration[]
+  dailyChallenges       DailyChallenge[]
+  questionAttempts      StudentQuestionAttempt[]
+  weeklySimulationItems WeeklySimulationItem[]
 
   @@unique([topicId, textHash])
+  @@unique([monitorId, questionBankItemId])
+  @@index([questionBankItemId])
+  @@index([subtopicId])
+  @@index([subsubtopicId])
   @@index([monitorId, subjectId, topicId, status])
   @@map("questions")
+}
+
+model QuestionBankItem {
+  id                 String   @id @default(uuid()) @db.Uuid
+  provider           String
+  providerQuestionId String   @map("provider_question_id")
+  externalId         String?  @map("external_id")
+  examType           String   @map("exam_type")
+  examName           String   @map("exam_name")
+  board              String?
+  institution        String?
+  examYear           Int?     @map("exam_year")
+  subject            String
+  topic              String
+  subtopic           String?
+  subsubtopic        String?
+  taxonomyPath       Json     @map("taxonomy_path")
+  statementHtml      String   @map("statement_html") @db.Text
+  statementText      String   @map("statement_text") @db.Text
+  alternatives       Json
+  correctAnswer      String   @map("correct_answer")
+  difficulty         String?
+  sourceUrl          String?  @map("source_url") @db.Text
+  imageUrls          Json     @map("image_urls")
+  rawPayload         Json     @map("raw_payload")
+  contentHash        String   @map("content_hash")
+  explanation        String?  @db.Text
+  explanationStatus  String   @default("NOT_REQUESTED") @map("explanation_status")
+  status             String   @default("IMPORTED")
+  sourceFetchedAt    DateTime @map("source_fetched_at")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  questions Question[]
+
+  @@unique([provider, providerQuestionId])
+  @@index([examType, board, subject, topic, status])
+  @@index([provider, examYear])
+  @@index([contentHash])
+  @@map("question_bank_items")
 }
 
 model QuestionSpan {
@@ -748,6 +898,69 @@ model FlashcardSource {
   @@map("flashcard_sources")
 }
 
+model WeeklySimulation {
+  id                 String                 @id @default(uuid()) @db.Uuid
+  studentId          String                 @map("student_id") @db.Uuid
+  monitorId          String                 @map("monitor_id") @db.Uuid
+  cycleStartDate     DateTime               @map("cycle_start_date") @db.Date
+  status             WeeklySimulationStatus @default(PENDING)
+  requestedAt        DateTime               @default(now()) @map("requested_at")
+  startedAt          DateTime?              @map("started_at")
+  solvingStartedAt   DateTime?              @map("solving_started_at")
+  deadlineAt         DateTime?              @map("deadline_at")
+  timeLimitSeconds   Int                    @default(3600) @map("time_limit_seconds")
+  completedAt        DateTime?              @map("completed_at")
+  durationSeconds    Int?                   @map("duration_seconds")
+  failedAt           DateTime?              @map("failed_at")
+  generationJobId    String?                @unique @map("generation_job_id")
+  questionCount      Int                    @default(0) @map("question_count")
+  answeredCount      Int                    @default(0) @map("answered_count")
+  correctCount       Int                    @default(0) @map("correct_count")
+  scorePercent       Float?                 @map("score_percent")
+  diagnosticSnapshot Json?                  @map("diagnostic_snapshot")
+  failureCode        String?                @map("failure_code")
+  failureMessage     String?                @map("failure_message")
+  createdAt          DateTime               @default(now()) @map("created_at")
+  updatedAt          DateTime               @updatedAt @map("updated_at")
+
+  student Student                @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  monitor Monitor                @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  items   WeeklySimulationItem[]
+
+  @@unique([studentId, monitorId, cycleStartDate])
+  @@index([studentId, monitorId, status])
+  @@index([monitorId, cycleStartDate])
+  @@map("weekly_simulations")
+}
+
+model WeeklySimulationItem {
+  id                String                  @id @default(uuid()) @db.Uuid
+  simulationId      String                  @map("simulation_id") @db.Uuid
+  questionId        String                  @map("question_id") @db.Uuid
+  position          Int
+  subjectId         String                  @map("subject_id") @db.Uuid
+  topicId           String?                 @map("topic_id") @db.Uuid
+  difficultyScore   Float                   @map("difficulty_score")
+  selectionPriority WeeklySelectionPriority @map("selection_priority")
+  selectionReason   String                  @map("selection_reason")
+  selectedAnswer    String?                 @map("selected_answer")
+  isCorrect         Boolean?                @map("is_correct")
+  responseTimeMs    Int?                    @map("response_time_ms")
+  answeredAt        DateTime?               @map("answered_at")
+  createdAt         DateTime                @default(now()) @map("created_at")
+  updatedAt         DateTime                @updatedAt @map("updated_at")
+
+  simulation WeeklySimulation @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+  question   Question         @relation(fields: [questionId], references: [id], onDelete: Restrict)
+  subject    MonitorSubject   @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  topic      MonitorTopic?    @relation(fields: [topicId], references: [id], onDelete: SetNull)
+
+  @@unique([simulationId, questionId])
+  @@unique([simulationId, position])
+  @@index([simulationId, topicId])
+  @@map("weekly_simulation_items")
+}
+
 model DailyChallenge {
   id                String   @id @default(uuid()) @db.Uuid
   monitorId         String   @map("monitor_id") @db.Uuid
@@ -771,19 +984,20 @@ model DailyChallenge {
 }
 
 model StudentQuestionAttempt {
-  id               String                     @id @default(uuid()) @db.Uuid
-  studentId        String                     @map("student_id") @db.Uuid
-  questionId       String                     @map("question_id") @db.Uuid
-  monitorId        String                     @map("monitor_id") @db.Uuid
-  dailyChallengeId String?                    @map("daily_challenge_id") @db.Uuid
+  id               String                       @id @default(uuid()) @db.Uuid
+  studentId        String                       @map("student_id") @db.Uuid
+  questionId       String                       @map("question_id") @db.Uuid
+  monitorId        String                       @map("monitor_id") @db.Uuid
+  dailyChallengeId String?                      @map("daily_challenge_id") @db.Uuid
   mode             StudentQuestionAttemptMode
-  selectedAnswer   String                     @map("selected_answer")
-  isCorrect        Boolean                    @map("is_correct")
-  responseTimeMs   Int?                       @map("response_time_ms")
-  answeredAt       DateTime                   @default(now()) @map("answered_at")
+  status           StudentQuestionAttemptStatus @default(ACTIVE)
+  selectedAnswer   String                       @map("selected_answer")
+  isCorrect        Boolean                      @map("is_correct")
+  responseTimeMs   Int?                         @map("response_time_ms")
+  answeredAt       DateTime                     @default(now()) @map("answered_at")
   metadata         Json?
-  idempotencyKey   String?                    @unique @map("idempotency_key") @db.Uuid
-  createdAt        DateTime                   @default(now()) @map("created_at")
+  idempotencyKey   String?                      @unique @map("idempotency_key") @db.Uuid
+  createdAt        DateTime                     @default(now()) @map("created_at")
 
   student          Student                @relation(fields: [studentId], references: [id], onDelete: Cascade)
   question         Question               @relation(fields: [questionId], references: [id], onDelete: Restrict)
@@ -794,6 +1008,7 @@ model StudentQuestionAttempt {
   @@index([studentId, answeredAt])
   @@index([monitorId, answeredAt])
   @@index([questionId, studentId])
+  @@index([studentId, status, answeredAt])
   @@map("student_question_attempts")
 }
 
@@ -834,6 +1049,11 @@ enum MonitorStatus {
   PUBLISHED
   PAUSED
   ARCHIVED
+}
+
+enum PayoutMode {
+  TEACHER_ACCOUNT
+  PLATFORM_FALLBACK
 }
 
 enum DocumentTag {
@@ -935,6 +1155,7 @@ enum QuestionStatus {
   DRAFT
   PENDING_REVIEW
   APPROVED
+  REPORTED
   REJECTED
 }
 
@@ -949,6 +1170,26 @@ enum StudentQuestionAttemptMode {
   PRACTICE
   DAILY_CHALLENGE
   SIMULATED
+}
+
+enum StudentQuestionAttemptStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum WeeklySimulationStatus {
+  PENDING
+  PROCESSING
+  READY
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum WeeklySelectionPriority {
+  NEVER_ANSWERED
+  PREVIOUSLY_INCORRECT
+  PREVIOUSLY_CORRECT
 }
 
 enum QuestionAnswerOrigin {
@@ -1072,6 +1313,7 @@ enum FlashcardGenerationOrigin {
 enum FlashcardStatus {
   PENDING_REVIEW
   APPROVED
+  REPORTED
   REJECTED
 }
 
@@ -1113,11 +1355,19 @@ model Student {
   enrollments                StudentEnrollment[]
   billingWebhookEvents       BillingWebhookEvent[]
   billingSubscriptionChanges BillingSubscriptionChange[]
+  paymentCustomers           PaymentCustomer[]
+  paymentOrders              PaymentOrder[]
+  paymentSubscriptions       PaymentSubscription[]
+  paymentSubscriptionItems   PaymentSubscriptionItem[]
+  paymentIdempotencyKeys     PaymentIdempotencyKey[]
+  paymentAuditEntries        PaymentAuditEntry[]
+  accessPaymentEvents        StudentAccessPaymentEvent[]
   questionAttempts           StudentQuestionAttempt[]
   challengeAttempts          DailyChallengeAttempt[]
   flashcardProgresses        StudentFlashcardProgress[]
   flashcardReviews           StudentFlashcardReviewLog[]
   contentReports             StudentContentReport[]
+  weeklySimulations          WeeklySimulation[]
 
   @@index([userId])
   @@index([email])
@@ -1125,27 +1375,31 @@ model Student {
 }
 
 model StudentSubscription {
-  id                    String    @id @default(uuid()) @db.Uuid
-  studentId             String    @map("student_id") @db.Uuid
-  monitorId             String    @map("monitor_id") @db.Uuid
-  purchaseId            String?   @map("purchase_id") @db.Uuid
-  lastPaymentId         String?   @map("last_payment_id") @db.Uuid
-  status                String    @default("active")
-  amountPaid            Float     @default(0) @map("amount_paid")
-  startsAt              DateTime  @default(now()) @map("starts_at")
-  expiresAt             DateTime? @map("expires_at")
-  gatewaySubscriptionId String?   @map("gateway_subscription_id")
-  currentPeriodStart    DateTime? @map("current_period_start")
-  currentPeriodEnd      DateTime? @map("current_period_end")
-  cancelAtPeriodEnd     Boolean   @default(false) @map("cancel_at_period_end")
-  cancelledAt           DateTime? @map("cancelled_at")
-  createdAt             DateTime  @default(now()) @map("created_at")
-  updatedAt             DateTime  @updatedAt @map("updated_at")
+  id                        String    @id @default(uuid()) @db.Uuid
+  studentId                 String    @map("student_id") @db.Uuid
+  monitorId                 String    @map("monitor_id") @db.Uuid
+  purchaseId                String?   @map("purchase_id") @db.Uuid
+  lastPaymentId             String?   @map("last_payment_id") @db.Uuid
+  status                    String    @default("active")
+  amountPaid                Float     @default(0) @map("amount_paid")
+  startsAt                  DateTime  @default(now()) @map("starts_at")
+  expiresAt                 DateTime? @map("expires_at")
+  gatewaySubscriptionId     String?   @map("gateway_subscription_id")
+  currentPeriodStart        DateTime? @map("current_period_start")
+  currentPeriodEnd          DateTime? @map("current_period_end")
+  cancelAtPeriodEnd         Boolean   @default(false) @map("cancel_at_period_end")
+  cancelledAt               DateTime? @map("cancelled_at")
+  paymentSubscriptionItemId String?   @unique @map("payment_subscription_item_id") @db.Uuid
+  lastPaymentChargeId       String?   @map("last_payment_charge_id") @db.Uuid
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
 
-  student     Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  monitor     Monitor          @relation(fields: [monitorId], references: [id], onDelete: Cascade)
-  purchase    StudentPurchase? @relation("SubscriptionPurchase", fields: [purchaseId], references: [id], onDelete: SetNull)
-  lastPayment StudentPurchase? @relation("SubscriptionLastPayment", fields: [lastPaymentId], references: [id], onDelete: SetNull)
+  student                 Student                  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  monitor                 Monitor                  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  purchase                StudentPurchase?         @relation("SubscriptionPurchase", fields: [purchaseId], references: [id], onDelete: SetNull)
+  lastPayment             StudentPurchase?         @relation("SubscriptionLastPayment", fields: [lastPaymentId], references: [id], onDelete: SetNull)
+  paymentSubscriptionItem PaymentSubscriptionItem? @relation("PaymentSubscriptionItemStudentSubscription", fields: [paymentSubscriptionItemId], references: [id], onDelete: SetNull)
+  lastPaymentCharge       PaymentCharge?           @relation("StudentSubscriptionLastPaymentCharge", fields: [lastPaymentChargeId], references: [id], onDelete: SetNull)
 
   @@unique([studentId, monitorId])
   @@index([studentId])
@@ -1304,18 +1558,20 @@ model BillingSubscriptionItem {
 }
 
 model StudentEnrollment {
-  id                 String                  @id @default(uuid()) @db.Uuid
-  studentId          String                  @map("student_id") @db.Uuid
-  monitorId          String                  @map("monitor_id") @db.Uuid
-  subscriptionItemId String                  @map("subscription_item_id") @db.Uuid
-  status             String                  @default("ACTIVE")
-  startsAt           DateTime                @default(now()) @map("starts_at")
-  endsAt             DateTime?               @map("ends_at")
-  createdAt          DateTime                @default(now()) @map("created_at")
-  updatedAt          DateTime                @updatedAt @map("updated_at")
-  student            Student                 @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  monitor            Monitor                 @relation(fields: [monitorId], references: [id], onDelete: Restrict)
-  subscriptionItem   BillingSubscriptionItem @relation(fields: [subscriptionItemId], references: [id], onDelete: Restrict)
+  id                        String                   @id @default(uuid()) @db.Uuid
+  studentId                 String                   @map("student_id") @db.Uuid
+  monitorId                 String                   @map("monitor_id") @db.Uuid
+  subscriptionItemId        String?                  @map("subscription_item_id") @db.Uuid
+  paymentSubscriptionItemId String?                  @unique @map("payment_subscription_item_id") @db.Uuid
+  status                    String                   @default("ACTIVE")
+  startsAt                  DateTime                 @default(now()) @map("starts_at")
+  endsAt                    DateTime?                @map("ends_at")
+  createdAt                 DateTime                 @default(now()) @map("created_at")
+  updatedAt                 DateTime                 @updatedAt @map("updated_at")
+  student                   Student                  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  monitor                   Monitor                  @relation(fields: [monitorId], references: [id], onDelete: Restrict)
+  subscriptionItem          BillingSubscriptionItem? @relation(fields: [subscriptionItemId], references: [id], onDelete: Restrict)
+  paymentSubscriptionItem   PaymentSubscriptionItem? @relation("PaymentSubscriptionItemEnrollment", fields: [paymentSubscriptionItemId], references: [id], onDelete: SetNull)
 
   @@unique([studentId, monitorId])
   @@index([status])
@@ -1339,6 +1595,394 @@ model BillingWebhookEvent {
   @@unique([provider, providerEventId])
   @@index([status])
   @@map("billing_webhook_events")
+}
+
+model PaymentAccount {
+  id                   String                 @id @default(uuid()) @db.Uuid
+  teacherId            String                 @map("teacher_id") @db.Uuid
+  environment          String                 @default("SANDBOX")
+  provider             String                 @default("ASAAS")
+  providerAccountId    String?                @unique @map("provider_account_id")
+  providerWebhookId    String?                @unique @map("provider_webhook_id")
+  walletId             String?                @unique @map("wallet_id")
+  revision             Int                    @default(1)
+  status               String                 @default("NOT_STARTED")
+  generalStatus        String?                @map("general_status")
+  commercialInfoStatus String?                @map("commercial_info_status")
+  bankAccountStatus    String?                @map("bank_account_status")
+  documentationStatus  String?                @map("documentation_status")
+  activationChannel    String?                @map("activation_channel")
+  onboardingUrl        String?                @map("onboarding_url") @db.Text
+  credentialRef        String?                @map("credential_ref")
+  rejectionReason      String?                @map("rejection_reason") @db.Text
+  verifiedAt           DateTime?              @map("verified_at")
+  lastEventAt          DateTime?              @map("last_event_at")
+  createdAt            DateTime               @default(now()) @map("created_at")
+  updatedAt            DateTime               @updatedAt @map("updated_at")
+  teacher              Teacher                @relation("TeacherPaymentAccounts", fields: [teacherId], references: [id], onDelete: Cascade)
+  currentTeachers      Teacher[]              @relation("TeacherCurrentPaymentAccount")
+  paymentProfile       TeacherPaymentProfile?
+  splits               PaymentSplit[]
+  webhookEvents        PaymentWebhookEvent[]
+  credential           PaymentAccountCredential?
+
+  @@unique([teacherId, environment, revision])
+  @@index([environment, providerAccountId])
+  @@index([environment, walletId])
+  @@index([teacherId, status])
+  @@index([environment, status])
+  @@map("payment_accounts")
+}
+
+model PaymentAccountCredential {
+  id               String         @id @default(uuid()) @db.Uuid
+  paymentAccountId String         @unique @map("payment_account_id") @db.Uuid
+  environment      String
+  ciphertext       String         @db.Text
+  nonce            String
+  authTag          String         @map("auth_tag")
+  keyVersion       Int            @default(1) @map("key_version")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  paymentAccount PaymentAccount @relation(fields: [paymentAccountId], references: [id], onDelete: Cascade)
+
+  @@map("payment_account_credentials")
+}
+
+model PaymentAccountCredentialOperation {
+  id            String   @id @default(uuid()) @db.Uuid
+  teacherId     String   @map("teacher_id") @db.Uuid
+  environment   String
+  operation     String
+  operationKey  String   @map("operation_key")
+  result        Json
+  createdAt     DateTime @default(now()) @map("created_at")
+  teacher       Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([teacherId, environment, operation, operationKey])
+  @@map("payment_account_credential_operations")
+}
+
+model TeacherPaymentProfile {
+  id               String         @id @default(uuid()) @db.Uuid
+  teacherId        String         @map("teacher_id") @db.Uuid
+  paymentAccountId String         @unique @map("payment_account_id") @db.Uuid
+  name             String
+  email            String
+  cpfCnpj          String         @map("cpf_cnpj")
+  birthDate        String?        @map("birth_date")
+  companyType      String?        @map("company_type")
+  mobilePhone      String         @map("mobile_phone")
+  incomeValue      Decimal        @map("income_value") @db.Decimal(14, 2)
+  address          String
+  addressNumber    String         @map("address_number")
+  complement       String?
+  province         String
+  postalCode       String         @map("postal_code")
+  site             String?
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+  teacher          Teacher        @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  paymentAccount   PaymentAccount @relation(fields: [paymentAccountId], references: [id], onDelete: Cascade)
+
+  @@index([teacherId, createdAt])
+  @@map("teacher_payment_profiles")
+}
+
+model PaymentCustomer {
+  id                 String                @id @default(uuid()) @db.Uuid
+  studentId          String                @map("student_id") @db.Uuid
+  environment        String                @default("SANDBOX")
+  provider           String                @default("ASAAS")
+  providerCustomerId String                @map("provider_customer_id")
+  createdAt          DateTime              @default(now()) @map("created_at")
+  updatedAt          DateTime              @updatedAt @map("updated_at")
+  student            Student               @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  orders             PaymentOrder[]
+  subscriptions      PaymentSubscription[]
+
+  @@unique([studentId, environment])
+  @@unique([environment, providerCustomerId])
+  @@index([studentId])
+  @@map("payment_customers")
+}
+
+model PaymentOrder {
+  id                 String               @id @default(uuid()) @db.Uuid
+  studentId          String               @map("student_id") @db.Uuid
+  customerId         String?              @map("customer_id") @db.Uuid
+  environment        String               @default("SANDBOX")
+  status             String               @default("PENDING")
+  grossCents         Int                  @map("gross_cents")
+  currency           String               @default("BRL")
+  externalReference  String               @map("external_reference")
+  requestFingerprint String               @map("request_fingerprint")
+  createdAt          DateTime             @default(now()) @map("created_at")
+  updatedAt          DateTime             @updatedAt @map("updated_at")
+  student            Student              @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  customer           PaymentCustomer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  items              PaymentOrderItem[]
+  checkouts          PaymentCheckout[]
+  subscription       PaymentSubscription?
+
+  @@unique([environment, externalReference])
+  @@index([studentId, status])
+  @@index([customerId])
+  @@map("payment_orders")
+}
+
+model PaymentOrderItem {
+  id                         String                    @id @default(uuid()) @db.Uuid
+  orderId                    String                    @map("order_id") @db.Uuid
+  monitorId                  String                    @map("monitor_id") @db.Uuid
+  teacherId                  String                    @map("teacher_id") @db.Uuid
+  descriptionSnapshot        String                    @map("description_snapshot")
+  priceCentsSnapshot         Int                       @map("price_cents_snapshot")
+  teacherPercentageSnapshot  Decimal                   @map("teacher_percentage_snapshot") @db.Decimal(7, 4)
+  referrerTeacherIdSnapshot  String?                   @map("referrer_teacher_id_snapshot") @db.Uuid
+  referralPercentageSnapshot Decimal                   @default(0) @map("referral_percentage_snapshot") @db.Decimal(7, 4)
+  quantity                   Int                       @default(1)
+  createdAt                  DateTime                  @default(now()) @map("created_at")
+  order                      PaymentOrder              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  monitor                    Monitor                   @relation(fields: [monitorId], references: [id], onDelete: Restrict)
+  teacher                    Teacher                   @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  subscriptionItems          PaymentSubscriptionItem[]
+  splits                     PaymentSplit[]
+
+  @@unique([orderId, monitorId])
+  @@index([monitorId])
+  @@index([teacherId])
+  @@map("payment_order_items")
+}
+
+model PaymentCheckout {
+  id                 String       @id @default(uuid()) @db.Uuid
+  orderId            String       @map("order_id") @db.Uuid
+  attempt            Int          @default(1)
+  environment        String       @default("SANDBOX")
+  providerCheckoutId String?      @map("provider_checkout_id")
+  checkoutUrl        String?      @map("checkout_url") @db.Text
+  externalReference  String       @map("external_reference")
+  status             String       @default("PENDING")
+  expiresAt          DateTime?    @map("expires_at")
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+  order              PaymentOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([environment, providerCheckoutId])
+  @@unique([environment, externalReference, attempt])
+  @@index([orderId, status])
+  @@map("payment_checkouts")
+}
+
+model PaymentSubscription {
+  id                     String                    @id @default(uuid()) @db.Uuid
+  studentId              String                    @map("student_id") @db.Uuid
+  orderId                String                    @unique @map("order_id") @db.Uuid
+  customerId             String?                   @map("customer_id") @db.Uuid
+  environment            String                    @default("SANDBOX")
+  providerSubscriptionId String?                   @map("provider_subscription_id")
+  status                 String                    @default("PENDING")
+  nextDueDate            DateTime?                 @map("next_due_date")
+  anchorDay              Int?                      @map("anchor_day")
+  currentPeriodStart     DateTime?                 @map("current_period_start")
+  currentPeriodEnd       DateTime?                 @map("current_period_end")
+  cancelAtPeriodEnd      Boolean                   @default(false) @map("cancel_at_period_end")
+  cancelledAt            DateTime?                 @map("cancelled_at")
+  desiredPayoutVersion   Int                       @default(1) @map("desired_payout_version")
+  appliedPayoutVersion   Int                       @default(1) @map("applied_payout_version")
+  createdAt              DateTime                  @default(now()) @map("created_at")
+  updatedAt              DateTime                  @updatedAt @map("updated_at")
+  student                Student                   @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  order                  PaymentOrder              @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  customer               PaymentCustomer?          @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  items                  PaymentSubscriptionItem[]
+  charges                PaymentCharge[]
+
+  @@unique([environment, providerSubscriptionId])
+  @@index([studentId, status])
+  @@index([customerId])
+  @@map("payment_subscriptions")
+}
+
+model PaymentSubscriptionItem {
+  id                         String               @id @default(uuid()) @db.Uuid
+  subscriptionId             String               @map("subscription_id") @db.Uuid
+  orderItemId                String?              @map("order_item_id") @db.Uuid
+  studentId                  String               @map("student_id") @db.Uuid
+  monitorId                  String               @map("monitor_id") @db.Uuid
+  teacherId                  String               @map("teacher_id") @db.Uuid
+  priceCentsSnapshot         Int                  @map("price_cents_snapshot")
+  teacherPercentageSnapshot  Decimal              @map("teacher_percentage_snapshot") @db.Decimal(7, 4)
+  referrerTeacherIdSnapshot  String?              @map("referrer_teacher_id_snapshot") @db.Uuid
+  referralPercentageSnapshot Decimal              @default(0) @map("referral_percentage_snapshot") @db.Decimal(7, 4)
+  status                     String               @default("ACTIVE")
+  createdAt                  DateTime             @default(now()) @map("created_at")
+  updatedAt                  DateTime             @updatedAt @map("updated_at")
+  subscription               PaymentSubscription  @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  orderItem                  PaymentOrderItem?    @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  student                    Student              @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  monitor                    Monitor              @relation(fields: [monitorId], references: [id], onDelete: Restrict)
+  teacher                    Teacher              @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  studentSubscription        StudentSubscription? @relation("PaymentSubscriptionItemStudentSubscription")
+  studentEnrollment          StudentEnrollment?   @relation("PaymentSubscriptionItemEnrollment")
+
+  @@unique([subscriptionId, monitorId])
+  @@index([studentId, monitorId, status])
+  @@index([teacherId])
+  @@map("payment_subscription_items")
+}
+
+model PaymentCharge {
+  id                       String                @id @default(uuid()) @db.Uuid
+  subscriptionId           String                @map("subscription_id") @db.Uuid
+  environment              String                @default("SANDBOX")
+  providerPaymentId        String                @map("provider_payment_id")
+  providerCheckoutId       String?               @map("provider_checkout_id")
+  dueDate                  DateTime?             @map("due_date")
+  servicePeriodStart       DateTime?             @map("service_period_start")
+  servicePeriodEnd         DateTime?             @map("service_period_end")
+  status                   String                @default("PENDING")
+  grossCents               Int                   @map("gross_cents")
+  netCents                 Int?                  @map("net_cents")
+  feeCents                 Int?                  @map("fee_cents")
+  confirmedAt              DateTime?             @map("confirmed_at")
+  receivedAt               DateTime?             @map("received_at")
+  appliedPayoutVersion     Int                   @default(1) @map("applied_payout_version")
+  createdAt                DateTime              @default(now()) @map("created_at")
+  updatedAt                DateTime              @updatedAt @map("updated_at")
+  subscription             PaymentSubscription   @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+  splits                   PaymentSplit[]
+  lastPaymentSubscriptions StudentSubscription[] @relation("StudentSubscriptionLastPaymentCharge")
+
+  @@unique([environment, providerPaymentId])
+  @@index([subscriptionId, status])
+  @@index([providerCheckoutId])
+  @@map("payment_charges")
+}
+
+model PaymentSplit {
+  id                   String            @id @default(uuid()) @db.Uuid
+  chargeId             String            @map("charge_id") @db.Uuid
+  orderItemId          String?           @map("order_item_id") @db.Uuid
+  accountRevisionId    String?           @map("account_revision_id") @db.Uuid
+  providerSplitId      String?           @map("provider_split_id")
+  role                 String
+  walletId             String?           @map("wallet_id")
+  destination          String            @default("PLATFORM")
+  payoutMode           PayoutMode        @default(PLATFORM_FALLBACK) @map("payout_mode")
+  contractedPercentage Decimal           @map("contracted_percentage") @db.Decimal(7, 4)
+  effectivePercentage  Decimal           @map("effective_percentage") @db.Decimal(7, 4)
+  expectedCents        Int?              @map("expected_cents")
+  settledCents         Int?              @map("settled_cents")
+  status               String            @default("PENDING")
+  fallbackReason       String?           @map("fallback_reason")
+  createdAt            DateTime          @default(now()) @map("created_at")
+  updatedAt            DateTime          @updatedAt @map("updated_at")
+  charge               PaymentCharge     @relation(fields: [chargeId], references: [id], onDelete: Cascade)
+  orderItem            PaymentOrderItem? @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  accountRevision      PaymentAccount?   @relation(fields: [accountRevisionId], references: [id], onDelete: SetNull)
+
+  @@unique([chargeId, role, walletId])
+  @@index([accountRevisionId, status])
+  @@index([chargeId, status])
+  @@map("payment_splits")
+}
+
+model PaymentIdempotencyKey {
+  id                 String   @id @default(uuid()) @db.Uuid
+  studentId          String   @map("student_id") @db.Uuid
+  operation          String
+  key                String
+  requestFingerprint String   @map("request_fingerprint")
+  resourceId         String?  @map("resource_id") @db.Uuid
+  state              String   @default("IN_PROGRESS")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  student            Student  @relation(fields: [studentId], references: [id], onDelete: Restrict)
+
+  @@unique([studentId, operation, key])
+  @@index([resourceId])
+  @@map("payment_idempotency_keys")
+}
+
+model PaymentWebhookEvent {
+  id                String          @id @default(uuid()) @db.Uuid
+  environment       String          @default("SANDBOX")
+  providerAccountId String?         @map("provider_account_id")
+  providerEventId   String          @map("provider_event_id")
+  eventType         String          @map("event_type")
+  payload           Json
+  state             String          @default("RECEIVED")
+  attempts          Int             @default(0)
+  nextAttemptAt     DateTime?       @map("next_attempt_at")
+  leaseUntil        DateTime?       @map("lease_until")
+  processedAt       DateTime?       @map("processed_at")
+  failureMessage    String?         @map("failure_message")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+  account           PaymentAccount? @relation(fields: [providerAccountId], references: [providerAccountId], onDelete: SetNull)
+
+  @@unique([environment, providerAccountId, providerEventId])
+  @@index([state, nextAttemptAt])
+  @@index([eventType])
+  @@map("payment_webhook_events")
+}
+
+model PaymentOutboxEvent {
+  id            String    @id @default(uuid()) @db.Uuid
+  eventId       String    @unique @map("event_id")
+  aggregateId   String    @map("aggregate_id") @db.Uuid
+  version       Int       @default(1)
+  eventType     String    @map("event_type")
+  payload       Json
+  state         String    @default("PENDING")
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime? @map("next_attempt_at")
+  processedAt   DateTime? @map("processed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@index([state, nextAttemptAt])
+  @@index([aggregateId, version])
+  @@map("payment_outbox_events")
+}
+
+model PaymentAuditEntry {
+  id            String   @id @default(uuid()) @db.Uuid
+  actorUserId   String?  @map("actor_user_id") @db.Uuid
+  databaseActor String?  @map("database_actor")
+  origin        String
+  reason        String
+  teacherId     String?  @map("teacher_id") @db.Uuid
+  monitorId     String?  @map("monitor_id") @db.Uuid
+  studentId     String?  @map("student_id") @db.Uuid
+  before        Json?
+  after         Json?
+  occurredAt    DateTime @default(now()) @map("occurred_at")
+  teacher       Teacher? @relation(fields: [teacherId], references: [id], onDelete: SetNull)
+  monitor       Monitor? @relation(fields: [monitorId], references: [id], onDelete: SetNull)
+  student       Student? @relation(fields: [studentId], references: [id], onDelete: SetNull)
+
+  @@index([teacherId, occurredAt])
+  @@index([monitorId, occurredAt])
+  @@index([studentId, occurredAt])
+  @@map("payment_audit_entries")
+}
+
+model StudentAccessPaymentEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  eventId     String   @unique @map("event_id")
+  studentId   String   @map("student_id") @db.Uuid
+  chargeId    String   @map("charge_id") @db.Uuid
+  action      String
+  processedAt DateTime @default(now()) @map("processed_at")
+  student     Student  @relation(fields: [studentId], references: [id], onDelete: Restrict)
+
+  @@index([studentId, processedAt])
+  @@index([chargeId])
+  @@map("student_access_payment_events")
 }
 
 enum FlashcardRating {
