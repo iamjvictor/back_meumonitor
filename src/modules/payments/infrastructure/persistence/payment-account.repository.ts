@@ -1,6 +1,7 @@
 import { prisma } from '../../../../lib/prisma.js';
 import type { CreatedSubaccount } from '../providers/asaas/asaas-account.provider.js';
 import type { CreateSubaccountCommand } from '../providers/asaas/asaas-account.provider.js';
+import { LocalPaymentAccountCredentialStore, type PaymentAccountCredentialStore } from '../credentials/payment-account-credential.store.js';
 
 export type PaymentAccountInput = {
   name: string;
@@ -19,6 +20,7 @@ export type PaymentAccountInput = {
 };
 
 export class PaymentAccountRepository {
+  constructor(private readonly credentialStore: PaymentAccountCredentialStore = new LocalPaymentAccountCredentialStore()) {}
   findCurrentByUserId(userId: string) {
     console.log('Buscando conta de recebimento atual', { event: 'payments.account_lookup_started', userId });
     return prisma.teacher.findUnique({
@@ -38,6 +40,7 @@ export class PaymentAccountRepository {
             bankAccountStatus: true,
             documentationStatus: true,
             onboardingUrl: true,
+            credentialRef: true,
             rejectionReason: true,
             verifiedAt: true,
             lastEventAt: true,
@@ -87,6 +90,19 @@ export class PaymentAccountRepository {
           status: created.status,
           onboardingUrl: created.onboardingUrl,
           activationChannel: created.onboardingUrl ? 'ONBOARDING_URL' : 'EMAIL_ACTIVATION',
+        },
+      });
+      if (!created.apiKey) throw new Error('ASAAS_ACCOUNT_CREDENTIAL_MISSING');
+      const environment = (process.env.ASAAS_ENV?.toUpperCase() ?? 'SANDBOX') as 'SANDBOX' | 'PRODUCTION';
+      const encryptedCredential = this.credentialStore.encrypt(account.id, environment, created.apiKey);
+      await transaction.paymentAccountCredential.create({
+        data: {
+          paymentAccountId: account.id,
+          environment,
+          ciphertext: encryptedCredential.ciphertext,
+          nonce: encryptedCredential.nonce,
+          authTag: encryptedCredential.authTag,
+          keyVersion: encryptedCredential.keyVersion,
         },
       });
       console.log('Conta de recebimento salva', {

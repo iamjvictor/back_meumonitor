@@ -58,6 +58,8 @@ export type CreatedSubaccount = {
   status: string;
   onboardingUrl: string | null;
   webhookId: string | null;
+  /** Internal one-shot credential; never serialize or log this value. */
+  readonly apiKey?: string;
 };
 
 export class AsaasAccountProvider {
@@ -93,6 +95,11 @@ export class AsaasAccountProvider {
       onboardingUrl: response.onboardingUrl ?? null,
       webhookId: response.webhooks?.[0]?.id ?? null,
     };
+    if (response.apiKey) {
+      // Keep the transient credential available to the application layer without
+      // making it part of normal object serialization/public responses.
+      Object.defineProperty(created, 'apiKey', { value: response.apiKey, enumerable: false, writable: false, configurable: false });
+    }
     console.log('Resposta de subconta normalizada', {
       event: 'payments.asaas_subaccount_response_normalized',
       providerAccountId: created.providerAccountId,
