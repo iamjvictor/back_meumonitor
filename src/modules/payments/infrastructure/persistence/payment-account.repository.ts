@@ -71,6 +71,15 @@ export class PaymentAccountRepository {
     });
   }
 
+  async findCredentialByUserIdAndAccountId(userId: string, accountId: string) {
+    const account = await this.database.paymentAccount.findFirst({
+      where: { id: accountId, teacher: { userId } },
+      select: { credential: true },
+    });
+    const credential = account?.credential;
+    return credential ? { id: credential.id, accountId, environment: credential.environment, ciphertext: credential.ciphertext, nonce: credential.nonce, authTag: credential.authTag, keyVersion: credential.keyVersion } : null;
+  }
+
   async persistCreatedAccount(userId: string, input: CreateSubaccountCommand, created: CreatedSubaccount) {
     return this.database.$transaction(async (transaction) => {
       const teacher = await transaction.teacher.findUniqueOrThrow({ where: { userId }, select: { id: true } });
