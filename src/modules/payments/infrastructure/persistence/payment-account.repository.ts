@@ -83,6 +83,14 @@ export class PaymentAccountRepository {
   async findAccountByUserAndEnvironment(userId: string, environment: string) {
     return this.database.paymentAccount.findFirst({ where: { environment, teacher: { userId } }, select: { id: true, environment: true } });
   }
+  async findCredentialOperation(userId: string, environment: string, operation: string, operationKey: string) {
+    return this.database.paymentAccountCredentialOperation.findFirst({ where: { teacher: { userId }, environment, operation, operationKey }, select: { result: true } });
+  }
+  async persistCredentialOperation(userId: string, environment: string, operation: string, operationKey: string, result: unknown) {
+    const teacher = await this.database.teacher.findUniqueOrThrow({ where: { userId }, select: { id: true } });
+    try { return await this.database.paymentAccountCredentialOperation.create({ data: { teacherId: teacher.id, environment, operation, operationKey, result: result as any }, select: { result: true } }); }
+    catch (error: any) { if (error?.code !== 'P2002') throw error; return this.findCredentialOperation(userId, environment, operation, operationKey); }
+  }
 
   async replaceCredential(accountId: string, environment: string, encrypted: { ciphertext: string; nonce: string; authTag: string; keyVersion: number }, credentialId: string) {
     return this.database.$transaction(async (transaction) => {

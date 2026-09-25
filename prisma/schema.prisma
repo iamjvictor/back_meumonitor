@@ -33,6 +33,7 @@ model Teacher {
   referralsMade            TeacherReferral[]         @relation("IndicatorTeacher")
   referralReceived         TeacherReferral?          @relation("ReferredTeacher")
   paymentAccounts          PaymentAccount[]          @relation("TeacherPaymentAccounts")
+  credentialOperations     PaymentAccountCredentialOperation[]
   paymentProfiles          TeacherPaymentProfile[]
   currentPaymentAccount    PaymentAccount?           @relation("TeacherCurrentPaymentAccount", fields: [currentPaymentAccountId], references: [id], onDelete: SetNull)
   paymentOrderItems        PaymentOrderItem[]
@@ -1647,6 +1648,20 @@ model PaymentAccountCredential {
   paymentAccount PaymentAccount @relation(fields: [paymentAccountId], references: [id], onDelete: Cascade)
 
   @@map("payment_account_credentials")
+}
+
+model PaymentAccountCredentialOperation {
+  id            String   @id @default(uuid()) @db.Uuid
+  teacherId     String   @map("teacher_id") @db.Uuid
+  environment   String
+  operation     String
+  operationKey  String   @map("operation_key")
+  result        Json
+  createdAt     DateTime @default(now()) @map("created_at")
+  teacher       Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([teacherId, environment, operation, operationKey])
+  @@map("payment_account_credential_operations")
 }
 
 model TeacherPaymentProfile {
