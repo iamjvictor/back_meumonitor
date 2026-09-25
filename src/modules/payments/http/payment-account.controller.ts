@@ -4,6 +4,7 @@ import { AppError } from '../../../core/errors/app-error.js';
 import { PaymentAccountAlreadyExistsError, StartPaymentAccountUseCase } from '../application/commands/start-payment-account.use-case.js';
 import type { GetPaymentAccountUseCase } from '../application/queries/get-payment-account.use-case.js';
 import { AsaasApiError } from '../infrastructure/providers/asaas/asaas-http.client.js';
+import { GetPaymentAccountOverviewUseCase, PaymentAccountNotFoundError, PaymentAccountOverviewProviderError } from '../application/queries/get-payment-account-overview.use-case.js';
 
 export const paymentAccountBodySchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -22,7 +23,35 @@ export const paymentAccountBodySchema = z.object({
 }).strict();
 
 export class PaymentAccountController {
-  constructor(private readonly getAccount: GetPaymentAccountUseCase, private readonly startAccount: StartPaymentAccountUseCase) {}
+  constructor(private readonly getAccount: GetPaymentAccountUseCase, private readonly startAccount: StartPaymentAccountUseCase, private readonly getOverview?: GetPaymentAccountOverviewUseCase) {}
+
+  async overview(request: FastifyRequest, reply: FastifyReply) {
+    if (!request.user) throw new AppError({ code: 'UNAUTHENTICATED', statusCode: 401, publicMessage: 'Sessão obrigatória.' });
+    if (!['teacher', 'professor'].includes(request.user.role?.toLowerCase() ?? '')) throw new AppError({ code: 'FORBIDDEN', statusCode: 403, publicMessage: 'Sessão de professor obrigatória.' });
+    if (!this.getOverview) throw new AppError({ code: 'OVERVIEW_UNAVAILABLE', statusCode: 503, publicMessage: 'Visão financeira indisponível.' });
+    const startedAt = Date.now();
+    console.log('Consulta do overview da conta iniciada', {
+      event: 'payments.account_overview_started', requestId: request.id, userId: request.user.id,
+    });
+    try {
+      const data = await this.getOverview.execute(request.user.id);
+      console.log('Consulta do overview da conta concluída', {
+        event: 'payments.account_overview_completed', requestId: request.id, userId: request.user.id,
+        status: 200, durationMs: Date.now() - startedAt, accountId: data.account.id,
+      });
+      return reply.send({ data });
+    } catch (error) {
+      const statusCode = error instanceof PaymentAccountNotFoundError ? 404 : error instanceof PaymentAccountOverviewProviderError ? 502 : 500;
+      console.warn('Consulta do overview da conta falhou', {
+        event: 'payments.account_overview_failed', requestId: request.id, userId: request.user.id,
+        status: statusCode, durationMs: Date.now() - startedAt,
+        errorType: error instanceof Error ? error.name : 'UnknownError',
+      });
+      if (error instanceof PaymentAccountNotFoundError) throw new AppError({ code: 'PAYMENT_ACCOUNT_NOT_FOUND', statusCode: 404, publicMessage: 'Conta de recebimento não encontrada.' });
+      if (error instanceof PaymentAccountOverviewProviderError) throw new AppError({ code: 'PAYMENT_ACCOUNT_OVERVIEW_UNAVAILABLE', statusCode: 502, publicMessage: 'Não foi possível consultar os dados financeiros.' });
+      throw error;
+    }
+  }
 
   async get(request: FastifyRequest, reply: FastifyReply) {
     if (!request.user) throw new AppError({ code: 'UNAUTHENTICATED', statusCode: 401, publicMessage: 'Sessão obrigatória.' });
@@ -97,15 +126,20 @@ export class PaymentAccountController {
         userId: request.user.id,
         errorType: error instanceof Error ? error.name : 'UnknownError',
         errorMessage: error instanceof Error ? error.message : String(error),
-        providerResponse: error && typeof error === 'object' && 'responseBody' in error ? error.responseBody : undefined,
+        providerCode: error instanceof AsaasApiError ? error.responseBody?.code : undefined,
+        providerErrorDescriptions: error instanceof AsaasApiError ? error.responseBody?.descriptions : undefined,
       });
       if (error instanceof PaymentAccountAlreadyExistsError) throw new AppError({ code: 'PAYMENT_ACCOUNT_ALREADY_EXISTS', statusCode: 409, publicMessage: 'O professor já possui uma conta de recebimento configurada.' });
       if (error instanceof Error && error.message === 'TEACHER_PROFILE_NOT_FOUND') throw new AppError({ code: 'TEACHER_PROFILE_NOT_FOUND', statusCode: 404, publicMessage: 'Conclua o perfil de professor antes de configurar o recebimento.' });
       if (error instanceof AsaasApiError && error.status === 400) {
+        const providerCode = error.responseBody?.code;
+        const publicMessage = providerCode === 'invalid_object'
+          ? 'O Asaas rejeitou os dados informados. Verifique o CEP, CPF/CNPJ, telefone, data de nascimento e endereço.'
+          : 'O Asaas não aceitou os dados da conta. Revise o formulário e tente novamente.';
         throw new AppError({
           code: 'ASAAS_ACCOUNT_VALIDATION_ERROR',
           statusCode: 422,
-          publicMessage: error.message.replace(/^Asaas request failed \(400\):\s*/, ''),
+          publicMessage,
           internalDetails: error.responseBody,
         });
       }

@@ -7,6 +7,7 @@ export class StartPaymentAccountUseCase {
   constructor(private readonly repository: PaymentAccountRepository, private readonly provider: AsaasAccountProvider) {}
 
   async execute(userId: string, input: CreateSubaccountCommand) {
+    const startedAt = Date.now();
     console.log('Início do caso de uso de conta de recebimento', {
       event: 'payments.account_use_case_started',
       userId,
@@ -37,8 +38,29 @@ export class StartPaymentAccountUseCase {
       walletId: created.walletId,
       status: created.status,
       hasOnboardingUrl: Boolean(created.onboardingUrl),
+      apiKeyReceived: Boolean(created.apiKey),
+      durationMs: Date.now() - startedAt,
     });
     console.log('Persistindo vínculo local da subconta', { event: 'payments.account_persistence_started', userId, providerAccountId: created.providerAccountId });
-    return this.repository.persistCreatedAccount(userId, input, created);
+    try {
+      const account = await this.repository.persistCreatedAccount(userId, input, created);
+      console.log('Vínculo local da subconta persistido', {
+        event: 'payments.account_persistence_completed',
+        userId,
+        accountId: account.id,
+        providerAccountId: account.providerAccountId,
+        durationMs: Date.now() - startedAt,
+      });
+      return account;
+    } catch (error) {
+      console.warn('Persistência local da subconta falhou', {
+        event: 'payments.account_persistence_failed',
+        userId,
+        providerAccountId: created.providerAccountId,
+        errorType: error instanceof Error ? error.name : 'UnknownError',
+        durationMs: Date.now() - startedAt,
+      });
+      throw error;
+    }
   }
 }

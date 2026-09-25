@@ -1,12 +1,16 @@
 export type AsaasHttpRequest = {
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
+  /** Credential for a scoped subaccount request; never included in logs. */
+  credential?: string;
+  environment?: 'sandbox' | 'production';
 };
 
 export type AsaasHttpClientConfig = {
   apiKey: string;
   baseUrl: string;
   timeoutMs: number;
+  environment?: 'sandbox' | 'production';
   fetchImpl?: typeof fetch;
 };
 
@@ -14,7 +18,7 @@ export class AsaasApiError extends Error {
   constructor(
     readonly status: number,
     message = `Asaas request failed (${status})`,
-    readonly responseBody?: unknown,
+    readonly responseBody?: { code?: string; descriptions?: string[] },
   ) {
     super(message);
     this.name = 'AsaasApiError';
@@ -29,6 +33,9 @@ export class AsaasHttpClient {
   }
 
   async request<T>(path: string, request: AsaasHttpRequest): Promise<T> {
+    if (request.environment && this.config.environment && request.environment !== this.config.environment) {
+      throw new Error('Asaas environment mismatch');
+    }
     const startedAt = Date.now();
     console.log('Requisição HTTP para Asaas iniciada', {
       event: 'payments.asaas_http_started',
@@ -45,7 +52,7 @@ export class AsaasHttpClient {
         headers: {
           accept: 'application/json',
           'content-type': 'application/json',
-          access_token: this.config.apiKey,
+          access_token: request.credential ?? this.config.apiKey,
           'user-agent': 'MeuMonitorAI',
         },
         body: request.body === undefined ? undefined : JSON.stringify(request.body),
@@ -60,17 +67,18 @@ export class AsaasHttpClient {
         } catch {
           // Mantém o texto bruto quando a API não responder JSON.
         }
-        const providerMessage = extractProviderErrorMessage(responseBody);
+        const providerError = extractProviderError(responseBody);
         console.warn('Asaas respondeu com erro HTTP', {
           event: 'payments.asaas_http_failed',
           method: request.method,
           path,
           status: response.status,
-          providerMessage,
-          responseBody,
+          providerCode: providerError?.code,
+          providerErrorCount: providerError?.descriptions.length ?? 0,
+          providerErrorDescriptions: providerError?.descriptions,
           durationMs: Date.now() - startedAt,
         });
-        throw new AsaasApiError(response.status, providerMessage ? `Asaas request failed (${response.status}): ${providerMessage}` : undefined, responseBody);
+        throw new AsaasApiError(response.status, `Asaas request failed (${response.status})`, providerError);
       }
 
       if (response.status === 204) {
@@ -93,11 +101,25 @@ export class AsaasHttpClient {
   }
 }
 
-function extractProviderErrorMessage(body: unknown) {
-  if (!body || typeof body !== 'object') return typeof body === 'string' ? body : undefined;
+function extractProviderError(body: unknown): { code?: string; descriptions: string[] } | undefined {
+  if (!body || typeof body !== 'object') return undefined;
   const candidate = body as { message?: unknown; errors?: Array<{ code?: unknown; description?: unknown }> };
   if (Array.isArray(candidate.errors) && candidate.errors.length > 0) {
-    return candidate.errors.map((error) => [error.code, error.description].filter(Boolean).join(': ')).join('; ');
+    const rawCode = candidate.errors.find((error) => typeof error.code === 'string')?.code;
+    const code = typeof rawCode === 'string' ? rawCode : undefined;
+    const descriptions = candidate.errors
+      .map((error) => typeof error.description === 'string' ? sanitizeProviderDescription(error.description) : null)
+      .filter((description): description is string => Boolean(description))
+      .slice(0, 5);
+    return code || descriptions.length > 0 ? { code: code?.slice(0, 80), descriptions } : undefined;
   }
-  return typeof candidate.message === 'string' ? candidate.message : undefined;
+  return undefined;
+}
+
+function sanitizeProviderDescription(value: string): string {
+  return value
+    .replace(/\b(api[ _-]?key|token|password|senha|cpf|cnpj)\b/gi, '[sensitive-field]')
+    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, '[email]')
+    .replace(/\d{8,}/g, '[number]')
+    .slice(0, 240);
 }

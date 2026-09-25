@@ -26,7 +26,7 @@ test('cliente Asaas envia access_token, user-agent e corpo JSON', async () => {
   assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), { name: 'Monitor' });
 });
 
-test('cliente Asaas preserva a mensagem de validação do provedor para diagnóstico', async () => {
+test('cliente Asaas sanitiza corpo e mensagem de erro do provedor', async () => {
   const client = new AsaasHttpClient({
     apiKey: 'secret',
     baseUrl: 'https://api-sandbox.asaas.com/v3',
@@ -36,7 +36,25 @@ test('cliente Asaas preserva a mensagem de validação do provedor para diagnós
 
   await assert.rejects(
     client.request('/customers', { method: 'GET' }),
-    (error: unknown) => error instanceof AsaasApiError && error.status === 401 && error.message.includes('CPF interno') && error.responseBody !== undefined,
+    (error: unknown) => error instanceof AsaasApiError && error.status === 401 && !error.message.includes('CPF interno') && JSON.stringify(error).includes('CPF interno') === false,
+  );
+});
+
+test('cliente Asaas preserva descrições sanitizadas para diagnóstico sem dados pessoais', async () => {
+  const client = new AsaasHttpClient({
+    apiKey: 'secret',
+    baseUrl: 'https://api-sandbox.asaas.com/v3',
+    timeoutMs: 1000,
+    fetchImpl: async () => new Response(JSON.stringify({ errors: [
+      { code: 'invalid_object', description: 'O CEP informado 24912710 não foi localizado para ana@example.com.' },
+    ] }), { status: 400 }),
+  });
+
+  await assert.rejects(
+    client.request('/accounts', { method: 'POST', body: { postalCode: '24912-710' } }),
+    (error: unknown) => error instanceof AsaasApiError
+      && error.responseBody?.code === 'invalid_object'
+      && error.responseBody.descriptions?.[0] === 'O CEP informado [number] não foi localizado para [email].',
   );
 });
 
@@ -54,4 +72,9 @@ test('cliente Asaas converte timeout em erro estável', async () => {
   });
 
   await assert.rejects(client.request('/payments', { method: 'GET' }), /Asaas request timed out/);
+});
+
+test('cliente impede credencial de ambiente diferente da URL configurada', async () => {
+  const client = new AsaasHttpClient({ apiKey: 'production-secret', baseUrl: 'https://api.asaas.com/v3', environment: 'production', timeoutMs: 1000 });
+  await assert.rejects(client.request('/finance/balance', { method: 'GET', credential: 'sandbox-secret', environment: 'sandbox' }), /environment mismatch/);
 });
