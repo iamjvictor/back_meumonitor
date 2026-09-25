@@ -1623,6 +1623,7 @@ model PaymentAccount {
   paymentProfile       TeacherPaymentProfile?
   splits               PaymentSplit[]
   webhookEvents        PaymentWebhookEvent[]
+  credential           PaymentAccountCredential?
 
   @@unique([teacherId, environment, revision])
   @@index([environment, providerAccountId])
@@ -1630,6 +1631,23 @@ model PaymentAccount {
   @@index([teacherId, status])
   @@index([environment, status])
   @@map("payment_accounts")
+}
+
+model PaymentAccountCredential {
+  id               String         @id @default(uuid()) @db.Uuid
+  paymentAccountId String         @unique @map("payment_account_id") @db.Uuid
+  environment      String
+  ciphertext       String         @db.Text
+  nonce            String
+  authTag          String         @map("auth_tag")
+  keyVersion       Int            @default(1) @map("key_version")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  paymentAccount PaymentAccount @relation(fields: [paymentAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([paymentAccountId, environment])
+  @@map("payment_account_credentials")
 }
 
 model TeacherPaymentProfile {
