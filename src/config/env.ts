@@ -6,6 +6,15 @@ import { z } from 'zod';
 // precedência das variáveis injetadas pelo ambiente de deploy.
 dotenv.config({ override: process.env.NODE_ENV !== 'production' });
 
+export function isValidAsaasCredentialEncryptionKey(value: string): boolean {
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value) || value.length % 4 !== 0) return false;
+  try {
+    return Buffer.from(value, 'base64').length === 32;
+  } catch {
+    return false;
+  }
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   HOST: z.string().default('0.0.0.0'),
@@ -83,7 +92,7 @@ const envSchema = z.object({
   PAYMENTS_PROVIDER: z.enum(['SIMULATED', 'ASAAS']).default('SIMULATED'),
   ASAAS_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
   ASAAS_API_KEY: z.string().min(1).optional(),
-  PAYMENT_ACCOUNT_CREDENTIAL_MASTER_KEY: z.string().min(1),
+  ASAAS_CREDENTIAL_ENCRYPTION_KEY: z.string().min(1).optional(),
   ASAAS_DASHBOARD_URL: z.string().url().default('https://www.asaas.com/login'),
   ASAAS_WEBHOOK_AUTH_TOKEN: z.string().min(32).max(255).optional(),
   ASAAS_WEBHOOK_URL: z.string().url().optional(),
@@ -94,6 +103,11 @@ const envSchema = z.object({
   PAYMENTS_SIMULATION_ENABLED: z.preprocess((value) => value === 'true', z.boolean()).default(false),
   PAYMENTS_TEST_PRICE_CENTS: z.coerce.number().int().positive().default(1990),
 }).superRefine((value, context) => {
+  if (!value.ASAAS_CREDENTIAL_ENCRYPTION_KEY) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['ASAAS_CREDENTIAL_ENCRYPTION_KEY'], message: 'ASAAS_CREDENTIAL_ENCRYPTION_KEY é obrigatória' });
+  } else if (!isValidAsaasCredentialEncryptionKey(value.ASAAS_CREDENTIAL_ENCRYPTION_KEY)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['ASAAS_CREDENTIAL_ENCRYPTION_KEY'], message: 'ASAAS_CREDENTIAL_ENCRYPTION_KEY deve ser Base64 de exatamente 32 bytes' });
+  }
   if (value.PAYMENTS_PROVIDER === 'ASAAS' && !value.ASAAS_API_KEY) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['ASAAS_API_KEY'], message: 'ASAAS_API_KEY é obrigatória quando PAYMENTS_PROVIDER=ASAAS' });
   }

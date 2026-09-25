@@ -6,12 +6,12 @@ import { PaymentAccountCredentialCrypto } from '../infrastructure/credentials/pa
 const masterKey = Buffer.alloc(32, 7).toString('base64');
 
 function withKey(value: string | undefined, fn: () => void): void {
-  const previous = process.env.PAYMENT_ACCOUNT_CREDENTIAL_MASTER_KEY;
-  if (value === undefined) delete process.env.PAYMENT_ACCOUNT_CREDENTIAL_MASTER_KEY;
-  else process.env.PAYMENT_ACCOUNT_CREDENTIAL_MASTER_KEY = value;
+  const previous = process.env.ASAAS_CREDENTIAL_ENCRYPTION_KEY;
+  if (value === undefined) delete process.env.ASAAS_CREDENTIAL_ENCRYPTION_KEY;
+  else process.env.ASAAS_CREDENTIAL_ENCRYPTION_KEY = value;
   try { fn(); } finally {
-    if (previous === undefined) delete process.env.PAYMENT_ACCOUNT_CREDENTIAL_MASTER_KEY;
-    else process.env.PAYMENT_ACCOUNT_CREDENTIAL_MASTER_KEY = previous;
+    if (previous === undefined) delete process.env.ASAAS_CREDENTIAL_ENCRYPTION_KEY;
+    else process.env.ASAAS_CREDENTIAL_ENCRYPTION_KEY = previous;
   }
 }
 

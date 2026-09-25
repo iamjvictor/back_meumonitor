@@ -17,7 +17,7 @@ export class PaymentAccountCredentialCrypto {
   private readonly logger?: CredentialLogger;
 
   constructor(options: { logger?: CredentialLogger } = {}) {
-    const encoded = process.env.PAYMENT_ACCOUNT_CREDENTIAL_MASTER_KEY;
+    const encoded = process.env.ASAAS_CREDENTIAL_ENCRYPTION_KEY;
     if (!encoded) throw new Error('Payment account credential master key is missing');
     const key = Buffer.from(encoded, 'base64');
     if (key.length !== 32) throw new Error('Payment account credential master key must be 32 bytes');
