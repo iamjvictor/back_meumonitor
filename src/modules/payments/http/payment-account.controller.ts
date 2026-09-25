@@ -5,6 +5,7 @@ import { PaymentAccountAlreadyExistsError, StartPaymentAccountUseCase } from '..
 import type { GetPaymentAccountUseCase } from '../application/queries/get-payment-account.use-case.js';
 import { AsaasApiError } from '../infrastructure/providers/asaas/asaas-http.client.js';
 import { GetPaymentAccountOverviewUseCase, PaymentAccountNotFoundError, PaymentAccountOverviewProviderError } from '../application/queries/get-payment-account-overview.use-case.js';
+import { isValidBrazilianPhone, isValidDocument, isValidMoney, isValidPostalCode, digitsOnly } from '../../../models/person-data.validation.js';
 
 export const paymentAccountBodySchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -13,14 +14,44 @@ export const paymentAccountBodySchema = z.object({
   birthDate: z.string().date().optional(),
   companyType: z.enum(['MEI', 'LIMITED', 'INDIVIDUAL', 'ASSOCIATION']).optional(),
   mobilePhone: z.string().trim().min(10).max(20),
-  incomeValue: z.number().positive(),
+  incomeValue: z.number().refine(isValidMoney, 'Informe um valor monetário positivo com até duas casas decimais.'),
   address: z.string().trim().min(2).max(160),
   addressNumber: z.string().trim().min(1).max(30),
   complement: z.string().trim().max(80).optional(),
   province: z.string().trim().min(2).max(100),
   postalCode: z.string().trim().min(8).max(12),
   site: z.string().url().optional(),
-}).strict();
+}).strict().superRefine((input, context) => {
+  const documentDigits = digitsOnly(input.cpfCnpj);
+  const documentType = documentDigits.length === 11 ? 'CPF' : documentDigits.length === 14 ? 'CNPJ' : undefined;
+  if (!documentType || !isValidDocument(input.cpfCnpj, documentType)) {
+    context.addIssue({ code: 'custom', path: ['cpfCnpj'], message: 'CPF/CNPJ inválido.' });
+  }
+  if (!isValidBrazilianPhone(input.mobilePhone)) {
+    context.addIssue({ code: 'custom', path: ['mobilePhone'], message: 'Celular inválido.' });
+  }
+  if (!isValidPostalCode(input.postalCode)) {
+    context.addIssue({ code: 'custom', path: ['postalCode'], message: 'CEP inválido.' });
+  }
+  if (input.birthDate) {
+    const date = new Date(`${input.birthDate}T00:00:00Z`);
+    if (Number.isNaN(date.getTime()) || date > new Date()) {
+      context.addIssue({ code: 'custom', path: ['birthDate'], message: 'Data de nascimento inválida.' });
+    }
+  }
+  if (documentType === 'CPF' && input.companyType) {
+    context.addIssue({ code: 'custom', path: ['companyType'], message: 'Tipo de empresa não se aplica a CPF.' });
+  }
+  if (documentType === 'CPF' && !input.birthDate) {
+    context.addIssue({ code: 'custom', path: ['birthDate'], message: 'Data de nascimento obrigatória para CPF.' });
+  }
+  if (documentType === 'CNPJ' && !input.companyType) {
+    context.addIssue({ code: 'custom', path: ['companyType'], message: 'Tipo de empresa obrigatório para CNPJ.' });
+  }
+  if (documentType === 'CNPJ' && input.birthDate) {
+    context.addIssue({ code: 'custom', path: ['birthDate'], message: 'Data de nascimento não se aplica a CNPJ.' });
+  }
+});
 
 export class PaymentAccountController {
   constructor(private readonly getAccount: GetPaymentAccountUseCase, private readonly startAccount: StartPaymentAccountUseCase, private readonly getOverview?: GetPaymentAccountOverviewUseCase) {}

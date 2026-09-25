@@ -3,6 +3,12 @@ import { prisma } from '../../../../lib/prisma.js';
 import type { PaymentWebhookInbox, PaymentWebhookInboxInput } from '../../application/commands/accept-webhook.use-case.js';
 import { PrismaPaymentOutboxRepository } from './prisma-outbox.repository.js';
 
+const RECOVERABLE_WEBHOOK_STATES = ['RECEIVED', 'FAILED'] as const;
+
+export function isRecoverableWebhookState(state: string) {
+  return (RECOVERABLE_WEBHOOK_STATES as readonly string[]).includes(state);
+}
+
 export class PrismaPaymentWebhookRepository implements PaymentWebhookInbox {
   constructor(
     private readonly environment: string,
@@ -12,11 +18,12 @@ export class PrismaPaymentWebhookRepository implements PaymentWebhookInbox {
   async accept(input: PaymentWebhookInboxInput) {
     console.log('Persistindo evento de webhook Asaas', { event: 'payments.webhook_inbox_write_started', tableName: 'payment_webhook_events', providerEventId: input.providerEventId, eventType: input.eventType, providerAccountId: input.providerAccountId });
     try {
+      const linkedProviderAccountId = await this.resolveLinkedProviderAccountId(input.providerAccountId);
       const event = await prisma.$transaction(async (transaction) => {
         const created = await transaction.paymentWebhookEvent.create({
           data: {
             environment: this.environment,
-            providerAccountId: input.providerAccountId,
+            providerAccountId: linkedProviderAccountId,
             providerEventId: input.providerEventId,
             eventType: input.eventType,
             payload: input.payload as Prisma.InputJsonValue,
@@ -31,14 +38,15 @@ export class PrismaPaymentWebhookRepository implements PaymentWebhookInbox {
         });
         return created;
       });
-      console.log('Evento de webhook Asaas persistido', { event: 'payments.webhook_inbox_write_completed', tableName: 'payment_webhook_events', eventId: event.id, providerEventId: input.providerEventId, state: event.state });
+      console.log('Evento de webhook Asaas persistido', { event: 'payments.webhook_inbox_write_completed', tableName: 'payment_webhook_events', eventId: event.id, providerEventId: input.providerEventId, state: event.state, providerAccountLinked: Boolean(linkedProviderAccountId) });
       return { id: event.id, duplicate: false, state: event.state };
     } catch (error) {
       if ((error as { code?: string }).code !== 'P2002') throw error;
+      const linkedProviderAccountId = await this.resolveLinkedProviderAccountId(input.providerAccountId);
       const existing = await prisma.paymentWebhookEvent.findFirst({
         where: {
           environment: this.environment,
-          providerAccountId: input.providerAccountId,
+          providerAccountId: linkedProviderAccountId,
           providerEventId: input.providerEventId,
         },
         select: { id: true, state: true },
@@ -47,6 +55,22 @@ export class PrismaPaymentWebhookRepository implements PaymentWebhookInbox {
       console.log('Webhook Asaas duplicado identificado', { event: 'payments.webhook_duplicate', tableName: 'payment_webhook_events', eventId: existing.id, providerEventId: input.providerEventId, state: existing.state });
       return { id: existing.id, duplicate: true, state: existing.state };
     }
+  }
+
+  private async resolveLinkedProviderAccountId(providerAccountId: string | undefined) {
+    if (!providerAccountId) return undefined;
+    const account = await prisma.paymentAccount.findUnique({
+      where: { providerAccountId },
+      select: { providerAccountId: true },
+    });
+    if (account?.providerAccountId) return account.providerAccountId;
+
+    console.log('Webhook recebido de conta Asaas sem vínculo local', {
+      event: 'payments.webhook_provider_account_unlinked',
+      providerAccountId,
+      reason: 'PRIMARY_ACCOUNT_OR_EXTERNAL_SUBACCOUNT',
+    });
+    return undefined;
   }
 
   async claim(eventId: string) {
@@ -75,7 +99,7 @@ export class PrismaPaymentWebhookRepository implements PaymentWebhookInbox {
   findRecoverable(limit = 100) {
     return prisma.paymentWebhookEvent.findMany({
       where: {
-        state: { in: ['RECEIVED', 'FAILED', 'WAITING_CORRELATION'] },
+        state: { in: [...RECOVERABLE_WEBHOOK_STATES] },
         attempts: { lt: 10 },
         OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }],
       },

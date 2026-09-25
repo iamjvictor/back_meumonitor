@@ -28,6 +28,22 @@ const events = [
   'ACCOUNT_STATUS_GENERAL_APPROVAL_PENDING',
   'ACCOUNT_STATUS_GENERAL_APPROVAL_REJECTED',
   'ACCOUNT_STATUS_COMMERCIAL_INFO_EXPIRED',
+  'CHECKOUT_CREATED',
+  'CHECKOUT_PAID',
+  'CHECKOUT_CANCELED',
+  'CHECKOUT_EXPIRED',
+  'SUBSCRIPTION_CREATED',
+  'SUBSCRIPTION_UPDATED',
+  'SUBSCRIPTION_DELETED',
+  'PAYMENT_CREATED',
+  'PAYMENT_CONFIRMED',
+  'PAYMENT_RECEIVED',
+  'PAYMENT_OVERDUE',
+  'PAYMENT_CREDIT_CARD_CAPTURE_REFUSED',
+  'PAYMENT_REFUNDED',
+  'PAYMENT_PARTIALLY_REFUNDED',
+  'PAYMENT_CHARGEBACK_REQUESTED',
+  'PAYMENT_SPLIT_DONE',
 ];
 
 const listResponse = await fetch(`${baseUrl}/webhooks`, {
@@ -53,7 +69,7 @@ const response = await fetch(`${baseUrl}/webhooks`, {
     access_token: env.ASAAS_API_KEY!,
   },
   body: JSON.stringify({
-    name: 'MeuMonitorAI - Status de subcontas',
+    name: 'MeuMonitorAI - Pagamentos e subcontas',
     url: webhookUrl,
     email: webhookEmail,
     enabled: true,

@@ -87,6 +87,18 @@ export class TeacherController {
     }
   }
 
+  async getMyStudents(request: FastifyRequest, reply: FastifyReply) {
+    if (!request.user) return reply.code(401).send({ error: 'UNAUTHENTICATED', message: 'Sessao de usuario obrigatoria.' });
+    if (request.user.role !== 'teacher') return reply.code(403).send({ error: 'FORBIDDEN', message: 'Apenas contas de professor podem acessar este recurso.' });
+    try {
+      const data = await this.service.findMyStudents(request.user.id);
+      return reply.send({ data });
+    } catch (error) {
+      console.error('Falha ao buscar alunos do professor', { event: 'teacher.students_lookup_failed', requestId: request.id, userId: request.user.id, errorType: error instanceof Error ? error.name : 'UnknownError' });
+      return reply.code(500).send({ error: 'TEACHER_STUDENTS_LOOKUP_FAILED', message: 'Nao foi possivel buscar os alunos.' });
+    }
+  }
+
   async updateMyProfile(request: FastifyRequest, reply: FastifyReply) {
     const startedAt = Date.now();
 
@@ -161,6 +173,7 @@ export class TeacherController {
 
   async getPublicProfile(request: FastifyRequest<{ Params: { teacherSlug: string } }>, reply: FastifyReply) {
     const { teacherSlug } = request.params;
+    const startedAt = Date.now();
 
     try {
       const teacher = await this.service.findPublicProfile(teacherSlug);
@@ -169,11 +182,19 @@ export class TeacherController {
         return reply.code(404).send({ error: 'TEACHER_PAGE_NOT_FOUND', message: 'Pagina do professor nao encontrada.' });
       }
 
+      console.log('Resposta da pagina publica enviada', {
+        event: 'teacher.public_profile_http_completed',
+        requestId: request.id,
+        pageSlug: teacherSlug,
+        statusCode: 200,
+        totalDurationMs: Date.now() - startedAt,
+      });
       return reply.code(200).send({ data: teacher });
     } catch (error) {
       console.log('Falha ao buscar pagina publica do professor', {
         event: 'teacher.public_profile_lookup_failed',
         pageSlug: teacherSlug,
+        totalDurationMs: Date.now() - startedAt,
         errorType: error instanceof Error ? error.name : 'UnknownError',
       });
       return reply.code(500).send({ error: 'PUBLIC_PROFILE_LOOKUP_FAILED', message: 'Nao foi possivel carregar a pagina.' });

@@ -9,7 +9,10 @@ type SubscriptionServicePort = {
   changeInterval?: (userId: string, subscriptionId: string, interval: 'MONTH' | 'YEAR', key?: string) => Promise<unknown>;
   cancel?: (userId: string, subscriptionId: string, key?: string) => Promise<unknown>;
 };
-type SubscriptionRepositoryPort = { findSubscriptionsForUser?: (userId: string) => Promise<unknown[]> };
+type SubscriptionRepositoryPort = {
+  findSubscriptionsForUser?: (userId: string) => Promise<unknown[]>;
+  findChangesForUser?: (userId: string) => Promise<unknown[]>;
+};
 
 const idSchema = z.string().uuid();
 const addSchema = z.object({ monitorId: idSchema }).strict();
@@ -51,6 +54,16 @@ export class SubscriptionController {
     log('monitor.billing_subscription_http_list_started', { requestId: request.id, userId });
     try { const data = this.repository.findSubscriptionsForUser ? await this.repository.findSubscriptionsForUser(userId) : []; log('monitor.billing_subscription_http_list_completed', { requestId: request.id, userId, count: data.length }); return reply.send({ data }); }
     catch (error) { return this.fail(reply, error, { requestId: request.id, route: 'list', userId }); }
+  }
+
+  async history(request: FastifyRequest, reply: FastifyReply) {
+    const userId = this.user(request, reply); if (!userId) return;
+    try {
+      const data = this.repository.findChangesForUser ? await this.repository.findChangesForUser(userId) : [];
+      return reply.send({ data });
+    } catch (error) {
+      return this.fail(reply, error, { requestId: request.id, route: 'history', userId });
+    }
   }
 
   async add(request: FastifyRequest, reply: FastifyReply) {

@@ -30,7 +30,7 @@ function getTokenExpirationMs(token: string): number | null {
 }
 
 // Cleanup expired cache items every 5 minutes
-setInterval(() => {
+const sessionCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [token, session] of sessionCache.entries()) {
     if (session.expiresAt <= now) {
@@ -38,6 +38,7 @@ setInterval(() => {
     }
   }
 }, 5 * 60 * 1000);
+sessionCleanupTimer.unref();
 
 export async function authMiddleware(request: FastifyRequest, reply: FastifyReply) {
   if (request.method === 'OPTIONS') {

@@ -14,6 +14,7 @@ import { ProcessPaymentWebhookUseCase } from './modules/payments/application/com
 import { PaymentWebhookRecoveryJob } from './modules/payments/jobs/payment-recovery.job.js';
 import { PaymentAccountRepository } from './modules/payments/infrastructure/persistence/payment-account.repository.js';
 import { PaymentEventRepository } from './modules/payments/infrastructure/persistence/payment-event.repository.js';
+import { startWorkerHeartbeat } from './health/worker-health.js';
 import { loadQuestionGenerationEnumState } from './worker/services/worker-database-bootstrap.js';
 
 const questionGenerationEnumState = await loadQuestionGenerationEnumState(() => prisma.$queryRaw<Array<{ hasCorrection: boolean; hasNormalization: boolean }>>`
@@ -38,6 +39,7 @@ if (!questionGenerationEnumState?.hasCorrection || !questionGenerationEnumState.
 }
 
 const redisConnection = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
+const stopWorkerHeartbeat = startWorkerHeartbeat(redisConnection);
 const workerService = new DocumentWorkerService();
 const dailyChallengeScheduler = startDailyChallengeScheduler();
 const weeklySimulationWorkerService = new WeeklySimulationWorkerService();
@@ -130,6 +132,7 @@ paymentWebhookWorker.on('failed', (job, error) => console.error('Falha no proces
 
 const shutdown = async (signal: string) => {
   console.log('Encerramento do worker solicitado', { event: 'monitor.document_worker_shutdown', signal });
+  stopWorkerHeartbeat();
   dailyChallengeScheduler.stop();
   clearInterval(paymentWebhookRecoveryTimer);
   await worker.close();

@@ -102,5 +102,6 @@ export class CheckoutService {
   simulatedCheckout(userId: string, purchaseId: string) { return this.legacy.simulatedCheckout(userId, purchaseId); }
   simulatedConfirmation(userId: string, purchaseId: string, sessionId: string) { return this.simulatedConfirmationService?.confirm(userId, purchaseId, sessionId) ?? this.legacy.simulatedConfirmation(userId, purchaseId, sessionId); }
   listPurchases(userId: string) { return this.legacy.listPurchases(userId); }
+  listPaymentHistory(userId: string) { return this.legacy.listPaymentHistory(userId); }
   listSubscriptions(userId: string) { return this.legacy.listSubscriptions(userId); }
 }

@@ -18,6 +18,14 @@ export class MonitorPublicationBlockedError extends Error {
 }
 
 export class MonitorRepository {
+  async findTeacherPageSlugByMonitorId(monitorId: string) {
+    const monitor = await prisma.monitor.findUnique({
+      where: { id: monitorId },
+      select: { teacher: { select: { pageSlug: true } } },
+    });
+    return monitor?.teacher.pageSlug ?? null;
+  }
+
   private readonly monitorTree = {
     teacher: true,
     subjects: {

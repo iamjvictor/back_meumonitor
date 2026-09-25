@@ -12,6 +12,7 @@ export type HostedCheckoutCommand = {
   successUrl: string;
   cancelUrl: string;
   expiredUrl: string;
+  nextDueDate: string;
   splits: PaymentSplit[];
 };
 

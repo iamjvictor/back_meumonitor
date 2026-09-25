@@ -2,11 +2,13 @@ import type { CreateMonitorInput } from '../models/monitor.model.js';
 import { normalizeQuestionBankSelection } from '../modules/question-bank/services/question-bank-selection.service.js';
 import { QuestionBankMaterializationService } from '../modules/question-bank/services/question-bank-materialization.service.js';
 import { MonitorRepository } from '../repositories/monitor.repository.js';
+import type { PublicTeacherProfileCache } from '../cache/public-teacher-profile.cache.js';
 
 export class MonitorService {
   constructor(
     private readonly repository: MonitorRepository,
     private readonly materializationService: QuestionBankMaterializationService = new QuestionBankMaterializationService(),
+    private readonly publicProfileCache?: PublicTeacherProfileCache,
   ) {}
 
   async createDraft(userId: string, input: CreateMonitorInput) {
@@ -97,19 +99,27 @@ export class MonitorService {
   }
 
   async addSubject(userId: string, monitorId: string, name: string, topics: string[] = []) {
-    return this.repository.addSubject(userId, monitorId, name, topics);
+    const result = await this.repository.addSubject(userId, monitorId, name, topics);
+    await this.invalidatePublicProfile(monitorId);
+    return result;
   }
 
   async deleteSubject(userId: string, monitorId: string, subjectId: string) {
-    return this.repository.deleteSubject(userId, monitorId, subjectId);
+    const result = await this.repository.deleteSubject(userId, monitorId, subjectId);
+    await this.invalidatePublicProfile(monitorId);
+    return result;
   }
 
   async addTopic(userId: string, monitorId: string, subjectId: string, name: string, definition?: string) {
-    return this.repository.addTopic(userId, monitorId, subjectId, name, definition);
+    const result = await this.repository.addTopic(userId, monitorId, subjectId, name, definition);
+    await this.invalidatePublicProfile(monitorId);
+    return result;
   }
 
   async deleteTopic(userId: string, monitorId: string, subjectId: string, topicId: string) {
-    return this.repository.deleteTopic(userId, monitorId, subjectId, topicId);
+    const result = await this.repository.deleteTopic(userId, monitorId, subjectId, topicId);
+    await this.invalidatePublicProfile(monitorId);
+    return result;
   }
 
   async update(
@@ -123,7 +133,31 @@ export class MonitorService {
       status?: 'DRAFT' | 'READY_TO_PUBLISH' | 'PUBLISHED' | 'PAUSED' | 'ARCHIVED';
     }
   ) {
-    return this.repository.update(userId, monitorId, data);
+    const result = await this.repository.update(userId, monitorId, data);
+    if (result) await this.invalidatePublicProfile(monitorId);
+    return result;
+  }
+
+  private async invalidatePublicProfile(monitorId: string) {
+    if (!this.publicProfileCache) return;
+    const pageSlug = await this.repository.findTeacherPageSlugByMonitorId(monitorId);
+    if (!pageSlug) return;
+    try {
+      await this.publicProfileCache.invalidate(pageSlug);
+      console.log('Cache Redis do perfil público invalidado após alteração de monitor', {
+        event: 'teacher.public_profile_cache_invalidated_by_monitor_change',
+        pageSlug,
+        monitorId,
+      });
+    } catch (error) {
+      console.warn('Falha ao invalidar cache público após alteração de monitor', {
+        event: 'teacher.public_profile_cache_monitor_invalidation_failed',
+        pageSlug,
+        monitorId,
+        errorType: error instanceof Error ? error.name : 'UnknownError',
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   setPublicationException(adminUserId: string, monitorId: string, allowed: boolean) {

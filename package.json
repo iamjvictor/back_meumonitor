@@ -42,9 +42,12 @@
     "prisma:format": "prisma format",
     "prisma:validate": "prisma validate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:deploy": "prisma migrate deploy"
-    ,"asaas:webhook:register": "node --import tsx src/scripts/register-asaas-webhook.ts"
-    ,"asaas:webhook:update": "node --import tsx src/scripts/update-asaas-webhook.ts"
+    "prisma:deploy": "prisma migrate deploy",
+    "asaas:webhook:register": "node --import tsx src/scripts/register-asaas-webhook.ts",
+    "asaas:webhook:update": "node --import tsx src/scripts/update-asaas-webhook.ts",
+    "asaas:checkout:sandbox": "node --import tsx src/scripts/create-asaas-sandbox-checkout.ts",
+    "asaas:webhook:test-payment-created": "node --import tsx src/scripts/test-asaas-payment-created-webhook.ts",
+    "payments:backfill": "node --import tsx src/scripts/backfill-payment-subscriptions.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
@@ -55,7 +58,7 @@
     "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
     "@supabase/supabase-js": "^2.112.3",
-    "bullmq": "^6.1.1",
+    "bullmq": "^6.3.9",
     "dotenv": "^16.5.0",
     "fastify": "^5.4.0",
     "gpt-tokenizer": "^4.0.0",

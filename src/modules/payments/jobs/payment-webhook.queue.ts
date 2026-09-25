@@ -16,10 +16,11 @@ export const paymentWebhookQueue = new Queue<PaymentWebhookJob>(PAYMENT_WEBHOOK_
   },
 });
 
-export async function enqueuePaymentWebhook(eventId: string) {
-  console.log('Adicionando webhook Asaas à fila Redis', { event: 'payments.webhook_queue_add_started', queue: PAYMENT_WEBHOOK_QUEUE_NAME, eventId });
-  await paymentWebhookQueue.add('process-payment-webhook', { eventId }, { jobId: eventId });
-  console.log('Webhook Asaas adicionado à fila Redis', { event: 'payments.webhook_queue_add_completed', queue: PAYMENT_WEBHOOK_QUEUE_NAME, eventId });
+export async function enqueuePaymentWebhook(eventId: string, options: { recovery?: boolean } = {}) {
+  const jobId = options.recovery ? `${eventId}:recovery:${Date.now()}` : eventId;
+  console.log('Adicionando webhook Asaas à fila Redis', { event: 'payments.webhook_queue_add_started', queue: PAYMENT_WEBHOOK_QUEUE_NAME, eventId, jobId, recovery: Boolean(options.recovery) });
+  await paymentWebhookQueue.add('process-payment-webhook', { eventId }, { jobId });
+  console.log('Webhook Asaas adicionado à fila Redis', { event: 'payments.webhook_queue_add_completed', queue: PAYMENT_WEBHOOK_QUEUE_NAME, eventId, jobId, recovery: Boolean(options.recovery) });
 }
 
 export async function closePaymentWebhookQueue() {

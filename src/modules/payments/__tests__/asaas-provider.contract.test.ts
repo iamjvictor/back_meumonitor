@@ -20,6 +20,7 @@ test('provider cria checkout hospedado mensal de cartão com snapshots e split',
     successUrl: 'https://app.test/checkout/retorno?status=success',
     cancelUrl: 'https://app.test/checkout/retorno?status=cancelled',
     expiredUrl: 'https://app.test/checkout/retorno?status=expired',
+    nextDueDate: '2026-09-23',
     splits: [{ walletId: 'wal_teacher', percentage: '50.0000' }],
   });
 
@@ -37,13 +38,40 @@ test('provider cria checkout hospedado mensal de cartão com snapshots e split',
       externalReference: 'order-123',
       customer: 'cus_123',
       items: [{ name: 'Monitor Matemática', description: 'Acesso mensal', quantity: 1, value: 59.9 }],
-      subscription: { cycle: 'MONTHLY' },
+      subscription: { cycle: 'MONTHLY', nextDueDate: '2026-09-23' },
       callback: {
         successUrl: 'https://app.test/checkout/retorno?status=success',
         cancelUrl: 'https://app.test/checkout/retorno?status=cancelled',
         expiredUrl: 'https://app.test/checkout/retorno?status=expired',
+        autoRedirect: true,
       },
-      splits: [{ walletId: 'wal_teacher', percentage: 50 }],
+      splits: [{ walletId: 'wal_teacher', percentageValue: 50 }],
     },
   });
+});
+
+test('provider normaliza link retornado pelo Asaas', async () => {
+  const provider = new AsaasCheckoutProvider({
+    async request<T>() {
+      return { id: 'co_link', link: 'https://sandbox.asaas.com/checkoutSession/show/co_link' } as T;
+    },
+  });
+
+  const result = await provider.createHostedCheckout({
+    externalReference: 'order-link', monitorName: 'Monitor', description: 'Assinatura', amountCents: 5990,
+    successUrl: 'https://app.test/success', cancelUrl: 'https://app.test/cancel', expiredUrl: 'https://app.test/expired',
+    nextDueDate: '2026-09-23', splits: [],
+  });
+
+  assert.equal(result.checkoutUrl, 'https://sandbox.asaas.com/checkoutSession/show/co_link');
+});
+
+test('provider monta link sandbox a partir do ID quando a API não retorna link', async () => {
+  const provider = new AsaasCheckoutProvider({ async request<T>() { return { id: 'co_sandbox' } as T; } }, 'sandbox');
+  const result = await provider.createHostedCheckout({
+    externalReference: 'order-sandbox', monitorName: 'Monitor', description: 'Assinatura', amountCents: 5990,
+    successUrl: 'https://app.test/success', cancelUrl: 'https://app.test/cancel', expiredUrl: 'https://app.test/expired',
+    nextDueDate: '2026-09-23', splits: [],
+  });
+  assert.equal(result.checkoutUrl, 'https://sandbox.asaas.com/checkoutSession/show/co_sandbox');
 });

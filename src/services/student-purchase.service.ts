@@ -7,7 +7,7 @@ function log(event: string, data: Record<string, unknown> = {}) {
 }
 
 export type PurchaseResult = { id: string; studentId: string; status: string; totalAmount: number; currency: string; items: Array<{ monitorId: string; unitAmount: number }> };
-type Repo = Pick<StudentPurchaseRepository, 'findStudentByUserId' | 'findPublishedMonitors' | 'findActiveSubscriptions' | 'findPurchaseByIdempotencyKey' | 'findPurchaseForStudent' | 'createPaymentSession' | 'updatePurchaseCheckoutReference' | 'findPaymentSessionByTokenHash' | 'consumePaymentSession' | 'confirmPurchase' | 'listPurchases' | 'listActiveSubscriptions'> & { createPurchase(data: StudentPurchaseCreateData): Promise<PurchaseResult> };
+type Repo = Pick<StudentPurchaseRepository, 'findStudentByUserId' | 'findPublishedMonitors' | 'findActiveSubscriptions' | 'findPurchaseByIdempotencyKey' | 'findPurchaseForStudent' | 'createPaymentSession' | 'updatePurchaseCheckoutReference' | 'findPaymentSessionByTokenHash' | 'consumePaymentSession' | 'confirmPurchase' | 'listPurchases' | 'listPaymentHistory' | 'listActiveSubscriptions'> & { createPurchase(data: StudentPurchaseCreateData): Promise<PurchaseResult> };
 
 export class StudentPurchaseService {
   constructor(private readonly repo: Repo, private readonly config = { simulationEnabled: false, testPriceCents: 1990 }) {}
@@ -83,5 +83,6 @@ export class StudentPurchaseService {
   }
   private hash(value: string) { return crypto.createHash('sha256').update(value).digest('hex'); }
   async listPurchases(userId: string) { const s = await this.repo.findStudentByUserId(userId); if (!s) throw new Error('STUDENT_NOT_FOUND'); return this.repo.listPurchases(s.id); }
+  async listPaymentHistory(userId: string) { const s = await this.repo.findStudentByUserId(userId); if (!s) throw new Error('STUDENT_NOT_FOUND'); return this.repo.listPaymentHistory(s.id); }
   async listSubscriptions(userId: string) { const s = await this.repo.findStudentByUserId(userId); if (!s) return []; return this.repo.listActiveSubscriptions(s.id); }
 }

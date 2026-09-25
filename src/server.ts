@@ -38,6 +38,7 @@ import { paymentAccountCredentialRoutes } from './modules/payments/http/payment-
 import { createPaymentsModule } from './modules/payments/payments.module.js';
 import { paymentsRoutes } from './modules/payments/http/payments.routes.js';
 import { getAsaasBaseUrl } from './modules/payments/infrastructure/providers/asaas/asaas.config.js';
+import { getWorkerHealth } from './health/worker-health.js';
 import { Redis } from 'ioredis';
 import { EntitlementService } from './modules/access/application/entitlement.service.js';
 import { PaymentEntitlementRepository } from './modules/access/infrastructure/payment-entitlement.repository.js';
@@ -83,6 +84,21 @@ await app.register(cors, {
 await app.register(rateLimit, { max: 100, timeWindow: '1 minute' });
 
 app.get('/health', async () => ({ status: 'ok' }));
+app.get('/health/worker', async (_request, reply) => {
+  try {
+    const workerHealth = await getWorkerHealth(entitlementRedis);
+    if (!workerHealth.ready) {
+      return reply.code(503).send({ status: 'unavailable', worker: 'not_ready' });
+    }
+    return { status: 'ok', worker: 'ready' };
+  } catch (error) {
+    console.warn('Falha ao consultar saúde do worker', {
+      event: 'monitor.worker_health_check_failed',
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return reply.code(503).send({ status: 'unavailable', worker: 'health_check_failed' });
+  }
+});
 // Cadastro e login permanecem publicos. Rotas autenticadas devem ser registradas
 // em um plugin separado com o authMiddleware como hook onRequest.
 await app.register(authRoutes, { prefix: '/api/v1/auth' });

@@ -3,6 +3,7 @@ import { getSignupLogData, getSignupRequestLogData, signupSchema } from '../mode
 import { AuthRepositoryError } from '../repositories/auth.repository.js';
 import { AuthService } from '../services/auth.service.js';
 import { AppError } from '../core/errors/app-error.js';
+import { sessionCookieOptions } from './session-cookie-options.js';
 
 export class AuthController {
   constructor(private readonly service: AuthService) {}
@@ -35,18 +36,15 @@ export class AuthController {
       const signup = await this.service.signup(result.data);
 
       if (signup.session) {
+        const cookieOptions = sessionCookieOptions(request);
         reply.setCookie('mm_access_token', signup.session.accessToken, {
           httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
-          path: '/',
+          ...cookieOptions,
           maxAge: signup.session.expiresIn,
         });
         reply.setCookie('mm_refresh_token', signup.session.refreshToken, {
           httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
-          path: '/',
+          ...cookieOptions,
           maxAge: 60 * 60 * 24 * 30,
         });
         console.log('Cookies de sessao emitidos', { event: 'auth.signup.cookies_issued', requestId: request.id, userId: signup.userId });

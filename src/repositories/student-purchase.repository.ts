@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
+import { mapPaymentOrderHistory, mapSubscriptionCancellationHistory } from './payment-history.mapper.js';
 
 export type StudentPurchaseCreateData = {
   studentId: string;
@@ -111,6 +112,76 @@ export class StudentPurchaseRepository {
       orderBy: { createdAt: 'desc' }
     });
     log('monitor.student_purchase_db_list_purchases_completed', { studentId, count: result.length });
+    return result;
+  }
+
+  async listPaymentHistory(studentId: string) {
+    const [legacyPurchases, paymentOrders, paymentCancellations, billingCancellations] = await Promise.all([
+      this.listPurchases(studentId),
+      prisma.paymentOrder.findMany({
+        where: { studentId },
+        select: {
+          id: true,
+          status: true,
+          grossCents: true,
+          currency: true,
+          createdAt: true,
+          items: { select: { descriptionSnapshot: true } },
+          checkouts: {
+            orderBy: { attempt: 'desc' },
+            take: 1,
+            select: { providerCheckoutId: true },
+          },
+          subscription: {
+            select: {
+              charges: {
+                orderBy: { createdAt: 'desc' },
+                select: {
+                  id: true,
+                  status: true,
+                  grossCents: true,
+                  providerCheckoutId: true,
+                  confirmedAt: true,
+                  receivedAt: true,
+                  createdAt: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.paymentAuditEntry.findMany({
+        where: { studentId, reason: 'STUDENT_REQUESTED_ITEM_CANCELLATION' },
+        select: { id: true, monitorId: true, occurredAt: true, monitor: { select: { name: true } } },
+        orderBy: { occurredAt: 'desc' },
+      }),
+      prisma.billingSubscriptionChange.findMany({
+        where: { studentId, type: { in: ['CANCEL', 'REMOVE'] } },
+        select: { id: true, monitorId: true, createdAt: true, monitor: { select: { name: true } } },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    // Um pedido sem cobrança persistida ainda é apenas uma tentativa local de checkout.
+    // Ele não deve aparecer para o aluno como compra até o Asaas confirmar a cobrança.
+    const asaasEntries = paymentOrders
+      .filter((order) => (order.subscription?.charges.length ?? 0) > 0)
+      .flatMap(mapPaymentOrderHistory);
+    const cancellationEntries = [
+      ...paymentCancellations.map((entry) => mapSubscriptionCancellationHistory({ id: entry.id, monitorId: entry.monitorId, monitorName: entry.monitor?.name ?? null, createdAt: entry.occurredAt, source: 'ASAAS' })),
+      ...billingCancellations.map((entry) => mapSubscriptionCancellationHistory({ id: entry.id, monitorId: entry.monitorId, monitorName: entry.monitor?.name ?? null, createdAt: entry.createdAt, source: 'BILLING' })),
+    ];
+    const result = [...legacyPurchases, ...asaasEntries, ...cancellationEntries].sort(
+      (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+    );
+    log('monitor.student_payment_history_completed', {
+      studentId,
+      legacyCount: legacyPurchases.length,
+      asaasCount: asaasEntries.length,
+      cancellationCount: cancellationEntries.length,
+      totalCount: result.length,
+    });
     return result;
   }
 }

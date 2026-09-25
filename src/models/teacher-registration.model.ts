@@ -1,10 +1,13 @@
 import { z } from 'zod';
+import { isValidBrazilianPhone } from './person-data.validation.js';
+
+const optionalPhone = z.string().trim().min(8).max(30).refine(isValidBrazilianPhone, 'Telefone inválido.');
 
 export const registerTeacherSchema = z.object({
   fullName: z.string().trim().min(2).max(120),
   email: z.string().trim().email().max(254),
   password: z.string().min(8).max(72).regex(/[A-Z]/).regex(/[a-z]/).regex(/[0-9]/).regex(/[^A-Za-z0-9]/),
-  phone: z.string().trim().min(8).max(30).optional(),
+  phone: optionalPhone.optional(),
   username: z.string().trim().min(3).max(60).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
   area: z.string().trim().min(2).max(120),
   customArea: z.string().trim().max(120).optional(),
@@ -35,7 +38,7 @@ export const registerTeacherProfileSchema = z.object({
 export const updateTeacherProfileSchema = z.object({
   fullName: z.string().trim().min(2).max(120).optional(),
   email: z.string().trim().email().max(254).optional(),
-  phone: z.string().trim().max(30).optional().nullable(),
+  phone: optionalPhone.optional().nullable(),
   username: z.string().trim().min(3).max(60).optional(),
   area: z.string().trim().min(2).max(120).optional(),
   customArea: z.string().trim().max(120).optional().nullable(),

@@ -10,10 +10,16 @@ import { SubscriptionRepository } from './repositories/subscription.repository.j
 import { SubscriptionService } from './services/subscription.service.js';
 import { SubscriptionController } from './controllers/subscription.controller.js';
 import { SimulatedConfirmationService } from './services/simulated-confirmation.service.js';
+import { AsaasPaymentProvider } from './providers/asaas-payment.provider.js';
+import { AsaasHttpClient } from '../payments/infrastructure/providers/asaas/asaas-http.client.js';
 
 export type BillingModuleConfig = {
   simulationEnabled: boolean;
   testPriceCents: number;
+  paymentProvider?: 'SIMULATED' | 'ASAAS';
+  asaasApiKey?: string;
+  asaasBaseUrl?: string;
+  asaasTimeoutMs?: number;
 };
 
 /**
@@ -24,7 +30,14 @@ export type BillingModuleConfig = {
 export function createBillingModule(config: BillingModuleConfig) {
   const repository = new PurchaseRepository();
   const customerRepository = new CustomerRepository();
-  const provider = new SimulatedPaymentProvider();
+  const simulatedProvider = new SimulatedPaymentProvider();
+  const provider = config.paymentProvider === 'ASAAS'
+    ? new AsaasPaymentProvider(new AsaasHttpClient({
+      apiKey: config.asaasApiKey ?? '',
+      baseUrl: config.asaasBaseUrl ?? 'https://api-sandbox.asaas.com/v3',
+      timeoutMs: config.asaasTimeoutMs ?? 10_000,
+    }), simulatedProvider)
+    : simulatedProvider;
   const webhookRepository = new WebhookEventRepository();
   const webhookService = new WebhookService({
     claimEvent: webhookRepository.claimEvent.bind(webhookRepository),

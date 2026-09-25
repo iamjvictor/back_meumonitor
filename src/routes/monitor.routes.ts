@@ -3,9 +3,10 @@ import { MonitorController } from '../controllers/monitor.controller.js';
 import { authMiddleware } from '../middleware/auth.middleware.js';
 import { MonitorRepository } from '../repositories/monitor.repository.js';
 import { MonitorService } from '../services/monitor.service.js';
+import { createPublicTeacherProfileCache } from '../cache/public-teacher-profile.cache.js';
 
 export async function monitorRoutes(app: FastifyInstance) {
-  const controller = new MonitorController(new MonitorService(new MonitorRepository()));
+  const controller = new MonitorController(new MonitorService(new MonitorRepository(), undefined, createPublicTeacherProfileCache()));
 
   app.get('/', { onRequest: authMiddleware }, controller.listMine.bind(controller));
   app.get('/question-bank-catalog', { onRequest: authMiddleware }, controller.getQuestionBankCatalog.bind(controller));

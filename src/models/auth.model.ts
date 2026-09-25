@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isValidBrazilianPhone, isValidDocument } from './person-data.validation.js';
 
 const signupPayloadSchema = z.object({
   email: z.string().trim().email().max(254),
@@ -22,6 +23,14 @@ const signupPayloadSchema = z.object({
     if (!input.whatsapp && !input.phone) {
       context.addIssue({ code: 'custom', path: ['phone'], message: 'WhatsApp/telefone e obrigatorio para professores.' });
     }
+  }
+  const document = input.cpf ?? input.documentNumber;
+  if (document && !isValidDocument(document, input.docType)) {
+    context.addIssue({ code: 'custom', path: ['documentNumber'], message: 'CPF/CNPJ inválido.' });
+  }
+  const phone = input.whatsapp ?? input.phone;
+  if (phone && !isValidBrazilianPhone(phone)) {
+    context.addIssue({ code: 'custom', path: ['phone'], message: 'Telefone inválido.' });
   }
 });
 
