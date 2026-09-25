@@ -18,7 +18,7 @@ test('PaymentAccountCredential stores one encrypted credential per account and e
   assert.match(source, /authTag\s+String\s+@map\("auth_tag"\)/);
   assert.match(source, /keyVersion\s+Int\s+@default\(1\)\s+@map\("key_version"\)/);
   assert.match(source, /paymentAccount\s+PaymentAccount\s+@relation\([^\n]*onDelete: Cascade/);
-  assert.match(source, /@@unique\(\[paymentAccountId, environment\]\)/);
+  assert.doesNotMatch(source, /@@unique\(\[paymentAccountId, environment\]\)/);
 });
 
 test('migration enforces required encrypted fields, positive key versions and cascade deletion', async () => {
@@ -28,5 +28,5 @@ test('migration enforces required encrypted fields, positive key versions and ca
   assert.match(migration, /"auth_tag" TEXT NOT NULL/);
   assert.match(migration, /CHECK \("key_version" > 0\)/);
   assert.match(migration, /ON DELETE CASCADE/);
-  assert.match(migration, /payment_account_id_environment_key/);
+  assert.doesNotMatch(migration, /payment_account_id_environment_key/);
 });

@@ -16,9 +16,6 @@ CREATE TABLE "payment_account_credentials" (
 -- CreateIndex
 CREATE UNIQUE INDEX "payment_account_credentials_payment_account_id_key" ON "payment_account_credentials"("payment_account_id");
 
--- CreateIndex
-CREATE UNIQUE INDEX "payment_account_credentials_payment_account_id_environment_key" ON "payment_account_credentials"("payment_account_id", "environment");
-
 -- AddForeignKey
 ALTER TABLE "payment_account_credentials" ADD CONSTRAINT "payment_account_credentials_payment_account_id_fkey" FOREIGN KEY ("payment_account_id") REFERENCES "payment_accounts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 

@@ -1646,7 +1646,6 @@ model PaymentAccountCredential {
 
   paymentAccount PaymentAccount @relation(fields: [paymentAccountId], references: [id], onDelete: Cascade)
 
-  @@unique([paymentAccountId, environment])
   @@map("payment_account_credentials")
 }
 
