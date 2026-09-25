@@ -1,4 +1,5 @@
 import { prisma } from '../../../../lib/prisma.js';
+import { randomUUID } from 'node:crypto';
 import type { CreatedSubaccount } from '../providers/asaas/asaas-account.provider.js';
 import type { CreateSubaccountCommand } from '../providers/asaas/asaas-account.provider.js';
 import { LocalPaymentAccountCredentialStore, type PaymentAccountCredentialStore } from '../credentials/payment-account-credential.store.js';
@@ -95,8 +96,10 @@ export class PaymentAccountRepository {
       if (!created.apiKey) throw new Error('ASAAS_ACCOUNT_CREDENTIAL_MISSING');
       const environment = (process.env.ASAAS_ENV?.toUpperCase() ?? 'SANDBOX') as 'SANDBOX' | 'PRODUCTION';
       const encryptedCredential = this.credentialStore.encrypt(account.id, environment, created.apiKey);
+      const credentialId = randomUUID();
       await transaction.paymentAccountCredential.create({
         data: {
+          id: credentialId,
           paymentAccountId: account.id,
           environment,
           ciphertext: encryptedCredential.ciphertext,
@@ -104,6 +107,10 @@ export class PaymentAccountRepository {
           authTag: encryptedCredential.authTag,
           keyVersion: encryptedCredential.keyVersion,
         },
+      });
+      await transaction.paymentAccount.update({
+        where: { id: account.id },
+        data: { credentialRef: credentialId },
       });
       console.log('Conta de recebimento salva', {
         event: 'payments.persistence_write_completed',

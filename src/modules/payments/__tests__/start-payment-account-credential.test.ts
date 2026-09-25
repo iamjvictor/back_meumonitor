@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { StartPaymentAccountUseCase } from '../application/commands/start-payment-account.use-case.js';
 
 test('passes the transient Asaas apiKey to persistence but never returns it publicly', async () => {
@@ -20,4 +23,10 @@ test('passes the transient Asaas apiKey to persistence but never returns it publ
 
   assert.equal((persisted as any[])[2].apiKey, 'secret-once');
   assert.equal('apiKey' in result, false);
+});
+
+test('persistência vincula credentialRef à credencial cifrada criada', async () => {
+  const rootPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
+  const source = await readFile(resolve(rootPath, 'src/modules/payments/infrastructure/persistence/payment-account.repository.ts'), 'utf8');
+  assert.match(source, /credentialRef:\s*credentialId/);
 });

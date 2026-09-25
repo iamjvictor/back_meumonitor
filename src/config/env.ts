@@ -18,6 +18,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
   PUBLIC_API_URL: z.string().url().optional(),
+  PUBLIC_FRONT_URL: z.string().url().optional(),
   DOCUMENT_INGESTION_V3_ENABLED: z.preprocess((value) => value === 'true', z.boolean()).default(false),
   DOCUMENT_PARSER_BASE_URL: z.string().url().optional(),
   DOCUMENT_PARSER_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
@@ -82,6 +83,8 @@ const envSchema = z.object({
   PAYMENTS_PROVIDER: z.enum(['SIMULATED', 'ASAAS']).default('SIMULATED'),
   ASAAS_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
   ASAAS_API_KEY: z.string().min(1).optional(),
+  PAYMENT_ACCOUNT_CREDENTIAL_MASTER_KEY: z.string().min(1),
+  ASAAS_DASHBOARD_URL: z.string().url().default('https://www.asaas.com/login'),
   ASAAS_WEBHOOK_AUTH_TOKEN: z.string().min(32).max(255).optional(),
   ASAAS_WEBHOOK_URL: z.string().url().optional(),
   ASAAS_WEBHOOK_EMAIL: z.string().email().optional(),
@@ -93,6 +96,14 @@ const envSchema = z.object({
 }).superRefine((value, context) => {
   if (value.PAYMENTS_PROVIDER === 'ASAAS' && !value.ASAAS_API_KEY) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['ASAAS_API_KEY'], message: 'ASAAS_API_KEY é obrigatória quando PAYMENTS_PROVIDER=ASAAS' });
+  }
+  if (value.PAYMENTS_PROVIDER === 'ASAAS') {
+    const returnBaseUrl = value.PAYMENTS_RETURN_BASE_URL ?? value.PUBLIC_FRONT_URL;
+    if (!returnBaseUrl) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['PUBLIC_FRONT_URL'], message: 'PUBLIC_FRONT_URL ou PAYMENTS_RETURN_BASE_URL é obrigatória quando PAYMENTS_PROVIDER=ASAAS' });
+    } else if (!returnBaseUrl.startsWith('https://')) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['PUBLIC_FRONT_URL'], message: 'A URL de retorno do checkout Asaas deve usar HTTPS' });
+    }
   }
 });
 
@@ -112,6 +123,36 @@ if (!parsedEnv.success) {
 
 export const env = parsedEnv.data;
 
-export const corsOrigins = env.CORS_ORIGINS.split(',')
+const configuredCorsOrigins = env.CORS_ORIGINS.split(',')
   .map((origin) => origin.trim().replace(/\/+$/, ''))
   .filter(Boolean);
+
+const publicFrontOrigin = env.PUBLIC_FRONT_URL?.trim().replace(/\/+$/, '');
+
+export function normalizeCorsOrigin(origin: string): string {
+  return origin.trim().replace(/\/+$/, '');
+}
+
+export const corsOrigins = [...new Set([
+  ...configuredCorsOrigins,
+  ...(publicFrontOrigin ? [publicFrontOrigin] : []),
+])];
+
+export const corsAllowedHeaders = [
+  'Content-Type',
+  'Authorization',
+  'X-Requested-With',
+  'Accept',
+  'Cookie',
+  'Idempotency-Key',
+  'X-Simulated-Session',
+  'ngrok-skip-browser-warning',
+];
+
+export function isCorsOriginAllowed(origin: string): boolean {
+  const normalized = normalizeCorsOrigin(origin);
+  return (
+    corsOrigins.includes(normalized) ||
+    /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(normalized)
+  );
+}
