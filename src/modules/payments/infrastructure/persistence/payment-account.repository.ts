@@ -21,7 +21,10 @@ export type PaymentAccountInput = {
 };
 
 export class PaymentAccountRepository {
-  constructor(private readonly credentialStore: PaymentAccountCredentialStore = new LocalPaymentAccountCredentialStore()) {}
+  constructor(
+    private readonly credentialStore: PaymentAccountCredentialStore = new LocalPaymentAccountCredentialStore(),
+    private readonly database: typeof prisma = prisma,
+  ) {}
   findCurrentByUserId(userId: string) {
     console.log('Buscando conta de recebimento atual', { event: 'payments.account_lookup_started', userId });
     return prisma.teacher.findUnique({
@@ -69,7 +72,7 @@ export class PaymentAccountRepository {
   }
 
   async persistCreatedAccount(userId: string, input: CreateSubaccountCommand, created: CreatedSubaccount) {
-    return prisma.$transaction(async (transaction) => {
+    return this.database.$transaction(async (transaction) => {
       const teacher = await transaction.teacher.findUniqueOrThrow({ where: { userId }, select: { id: true } });
       const previous = await transaction.paymentAccount.findFirst({ where: { teacherId: teacher.id, environment: process.env.ASAAS_ENV?.toUpperCase() ?? 'SANDBOX' }, orderBy: { revision: 'desc' }, select: { revision: true } });
       console.log('Salvando conta de recebimento', {
