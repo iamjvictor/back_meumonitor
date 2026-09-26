@@ -1,5 +1,5 @@
 import { env } from '../config/env.js';
-import { getAsaasBaseUrl } from '../modules/payments/infrastructure/providers/asaas/asaas.config.js';
+import { getAsaasBaseUrl, selectAsaasApiKey } from '../modules/payments/infrastructure/providers/asaas/asaas.config.js';
 
 const webhookUrl = env.ASAAS_WEBHOOK_URL ?? (env.PUBLIC_API_URL ? `${env.PUBLIC_API_URL.replace(/\/$/, '')}/api/v1/payments/webhooks/asaas` : undefined);
 const webhookEmail = process.env.ASAAS_WEBHOOK_EMAIL;
@@ -47,7 +47,7 @@ const events = [
 let webhookId = env.ASAAS_WEBHOOK_ID;
 if (!webhookId) {
   const listResponse = await fetch(`${getAsaasBaseUrl(env.ASAAS_ENV)}/webhooks`, {
-    headers: { accept: 'application/json', access_token: env.ASAAS_API_KEY! },
+    headers: { accept: 'application/json', access_token: selectAsaasApiKey(env.ASAAS_ENV, { sandbox: env.ASAAS_API_KEY_SANDBOX, production: env.ASAAS_API_KEY })! },
   });
   const listPayload = await listResponse.json().catch(() => null) as { data?: Array<{ id?: string; url?: string }> } | null;
   webhookId = listPayload?.data?.find((webhook) => webhook.url === webhookUrl)?.id;
@@ -59,7 +59,7 @@ if (!webhookId) throw new Error('Nenhum webhook foi encontrado para esta URL. De
 
 const response = await fetch(`${getAsaasBaseUrl(env.ASAAS_ENV)}/webhooks/${webhookId}`, {
   method: 'PUT',
-  headers: { accept: 'application/json', 'content-type': 'application/json', access_token: env.ASAAS_API_KEY! },
+  headers: { accept: 'application/json', 'content-type': 'application/json', access_token: selectAsaasApiKey(env.ASAAS_ENV, { sandbox: env.ASAAS_API_KEY_SANDBOX, production: env.ASAAS_API_KEY })! },
   body: JSON.stringify({
     name: 'MeuMonitorAI - Pagamentos e subcontas',
     url: webhookUrl,

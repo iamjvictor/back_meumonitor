@@ -97,6 +97,20 @@ test('falha do Redis faz fallback ao banco e invalida apenas a chave do aluno', 
   assert.deepEqual(calls, ['entitlement:v1:production:student-a']);
 });
 
+test('leitura pendente do Redis usa o fallback em vez de bloquear o snapshot', { timeout: 100 }, async () => {
+  const cache = new RedisEntitlementCache({
+    get: async () => new Promise<string | null>(() => {}),
+    async set() { return 'OK'; },
+    async del() { return 1; },
+  }, 'sandbox', 5);
+  const service = new EntitlementService({ async listForStudent() { return [row()]; } }, cache);
+
+  const snapshot = await service.getSnapshot('student-1');
+
+  assert.equal(snapshot.source, 'DATABASE');
+  assert.deepEqual(snapshot.monitors.map((monitor) => monitor.monitorId), ['monitor-1']);
+});
+
 test('hasMonitorAccess usa o mesmo snapshot canônico', async () => {
   const service = new EntitlementService({ async listForStudent() { return [row()]; } }, fakeCache().cache);
   assert.equal(await service.hasMonitorAccess('student-1', 'monitor-1'), true);

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import type { HostedCheckoutResult, PaymentProvider } from '../../domain/ports/payment-provider.port.js';
 import type { CheckoutIntent, CreateCheckoutRepository } from '../../infrastructure/persistence/payment-checkout.repository.js';
 
@@ -10,8 +10,8 @@ export class CheckoutIdempotencyKeyReusedError extends Error {}
 export class CheckoutPendingError extends Error {}
 
 // Temporary Sandbox override. Keep the monitor/catalog price unchanged while
-// making the local order and provider checkout agree on the one-cent test value.
-export const TEMPORARY_CHECKOUT_PRICE_OVERRIDE_CENTS = 1;
+// making the local order and provider checkout agree on the minimum test value.
+export const TEMPORARY_CHECKOUT_PRICE_OVERRIDE_CENTS = 500;
 
 export type CreateCheckoutInput = { monitorId: string; idempotencyKey: string; returnBaseUrl: string };
 

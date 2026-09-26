@@ -1,5 +1,5 @@
 import { env } from '../config/env.js';
-import { getAsaasBaseUrl } from '../modules/payments/infrastructure/providers/asaas/asaas.config.js';
+import { getAsaasBaseUrl, selectAsaasApiKey } from '../modules/payments/infrastructure/providers/asaas/asaas.config.js';
 
 const webhookUrl = env.ASAAS_WEBHOOK_URL ?? (env.PUBLIC_API_URL ? `${env.PUBLIC_API_URL.replace(/\/$/, '')}/api/v1/payments/webhooks/asaas` : undefined);
 const webhookEmail = process.env.ASAAS_WEBHOOK_EMAIL;
@@ -47,7 +47,7 @@ const events = [
 ];
 
 const listResponse = await fetch(`${baseUrl}/webhooks`, {
-  headers: { accept: 'application/json', access_token: env.ASAAS_API_KEY! },
+  headers: { accept: 'application/json', access_token: selectAsaasApiKey(env.ASAAS_ENV, { sandbox: env.ASAAS_API_KEY_SANDBOX, production: env.ASAAS_API_KEY })! },
 });
 const listPayload = await listResponse.json().catch(() => null) as { data?: Array<{ id?: string; url?: string; enabled?: boolean }> } | null;
 const existing = listPayload?.data?.find((webhook) => webhook.url === webhookUrl);
@@ -66,7 +66,7 @@ const response = await fetch(`${baseUrl}/webhooks`, {
   headers: {
     accept: 'application/json',
     'content-type': 'application/json',
-    access_token: env.ASAAS_API_KEY!,
+    access_token: selectAsaasApiKey(env.ASAAS_ENV, { sandbox: env.ASAAS_API_KEY_SANDBOX, production: env.ASAAS_API_KEY })!,
   },
   body: JSON.stringify({
     name: 'MeuMonitorAI - Pagamentos e subcontas',

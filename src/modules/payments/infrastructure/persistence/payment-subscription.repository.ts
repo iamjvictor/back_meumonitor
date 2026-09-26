@@ -7,11 +7,33 @@ export class PaymentSubscriptionRepository {
   }
 
   findIdempotency(studentId: string, operation: string, key: string) {
-    return prisma.paymentIdempotencyKey.findUnique({ where: { studentId_operation_key: { studentId, operation, key } }, select: { state: true } });
+    return prisma.paymentIdempotencyKey.findUnique({ where: { studentId_operation_key: { studentId, operation, key } }, select: { state: true, resourceId: true } });
   }
 
   async startIdempotency(studentId: string, operation: string, key: string, resourceId: string) {
-    await prisma.paymentIdempotencyKey.create({ data: { studentId, operation, key, requestFingerprint: `${operation}:${resourceId}`, resourceId, state: 'IN_PROGRESS' } });
+    try {
+      await prisma.paymentIdempotencyKey.create({ data: { studentId, operation, key, requestFingerprint: `${operation}:${resourceId}`, resourceId, state: 'IN_PROGRESS' } });
+      return true;
+    } catch (error) {
+      if (typeof error === 'object' && error && 'code' in error && error.code === 'P2002') return false;
+      throw error;
+    }
+  }
+
+  async restartFailedIdempotency(studentId: string, operation: string, key: string) {
+    const result = await prisma.paymentIdempotencyKey.updateMany({
+      where: { studentId, operation, key, state: 'FAILED' },
+      data: { state: 'IN_PROGRESS' },
+    });
+    return result.count === 1;
+  }
+
+  async markProviderCancellationConfirmed(studentId: string, operation: string, key: string) {
+    const result = await prisma.paymentIdempotencyKey.updateMany({
+      where: { studentId, operation, key, state: 'IN_PROGRESS' },
+      data: { state: 'PROVIDER_CONFIRMED' },
+    });
+    if (result.count !== 1) throw new Error('IDEMPOTENCY_STATE_CONFLICT');
   }
 
   async completeIdempotency(studentId: string, operation: string, key: string, resourceId: string) {
@@ -41,6 +63,32 @@ export class PaymentSubscriptionRepository {
 
   updateSubscription(id: string, data: { status?: string; cancelAtPeriodEnd?: boolean }) {
     return prisma.paymentSubscription.update({ where: { id }, data });
+  }
+
+  async finalizeCancellation(data: { itemId: string; studentId: string; subscriptionId: string; monitorId: string; actorUserId: string; cancelEntireSubscription: boolean; endsAt: string | null; idempotencyKey?: string }) {
+    await prisma.$transaction(async (tx) => {
+      await tx.paymentSubscriptionItem.update({ where: { id: data.itemId }, data: { status: 'CANCEL_PENDING' } });
+      if (data.cancelEntireSubscription) {
+        await tx.paymentSubscription.update({ where: { id: data.subscriptionId }, data: { status: 'CANCEL_PENDING', cancelAtPeriodEnd: true } });
+      }
+      await tx.paymentAuditEntry.create({
+        data: {
+          actorUserId: data.actorUserId,
+          studentId: data.studentId,
+          monitorId: data.monitorId,
+          origin: 'STUDENT_APP',
+          reason: 'STUDENT_REQUESTED_ITEM_CANCELLATION',
+          after: { subscriptionId: data.subscriptionId, itemId: data.itemId, status: 'CANCEL_PENDING', endsAt: data.endsAt },
+        },
+      });
+      if (data.idempotencyKey) {
+        const result = await tx.paymentIdempotencyKey.updateMany({
+          where: { studentId: data.studentId, operation: 'CANCEL_SUBSCRIPTION_ITEM', key: data.idempotencyKey, state: 'PROVIDER_CONFIRMED' },
+          data: { state: 'COMPLETED', resourceId: data.subscriptionId },
+        });
+        if (result.count !== 1) throw new Error('IDEMPOTENCY_STATE_CONFLICT');
+      }
+    });
   }
 
   createAudit(data: { actorUserId: string; studentId: string; subscriptionId: string; monitorId: string; reason: string; endsAt?: string | null }) {

@@ -92,6 +92,7 @@ const envSchema = z.object({
   LOAD_TEST_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
   PAYMENTS_PROVIDER: z.enum(['SIMULATED', 'ASAAS']).default('SIMULATED'),
   ASAAS_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
+  ASAAS_API_KEY_SANDBOX: z.string().min(1).optional(),
   ASAAS_API_KEY: z.string().min(1).optional(),
   ASAAS_CREDENTIAL_ENCRYPTION_KEY: z.string().min(1).optional(),
   ASAAS_DASHBOARD_URL: z.string().url().default('https://www.asaas.com/login'),
@@ -109,8 +110,10 @@ const envSchema = z.object({
   } else if (!isValidAsaasCredentialEncryptionKey(value.ASAAS_CREDENTIAL_ENCRYPTION_KEY)) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['ASAAS_CREDENTIAL_ENCRYPTION_KEY'], message: 'ASAAS_CREDENTIAL_ENCRYPTION_KEY deve ser Base64 de exatamente 32 bytes' });
   }
-  if (value.PAYMENTS_PROVIDER === 'ASAAS' && !value.ASAAS_API_KEY) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ['ASAAS_API_KEY'], message: 'ASAAS_API_KEY é obrigatória quando PAYMENTS_PROVIDER=ASAAS' });
+  const configuredAsaasApiKey = value.ASAAS_ENV === 'sandbox' ? value.ASAAS_API_KEY_SANDBOX : value.ASAAS_API_KEY;
+  if (value.PAYMENTS_PROVIDER === 'ASAAS' && !configuredAsaasApiKey) {
+    const keyName = value.ASAAS_ENV === 'sandbox' ? 'ASAAS_API_KEY_SANDBOX' : 'ASAAS_API_KEY';
+    context.addIssue({ code: z.ZodIssueCode.custom, path: [keyName], message: `${keyName} é obrigatória quando PAYMENTS_PROVIDER=ASAAS e ASAAS_ENV=${value.ASAAS_ENV}` });
   }
   if (value.PAYMENTS_PROVIDER === 'ASAAS') {
     const returnBaseUrl = value.PAYMENTS_RETURN_BASE_URL ?? value.PUBLIC_FRONT_URL;
