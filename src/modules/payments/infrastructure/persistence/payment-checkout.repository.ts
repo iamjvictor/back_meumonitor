@@ -39,7 +39,7 @@ export class PaymentCheckoutRepository implements CreateCheckoutRepository {
   }
 
   findPublishedMonitor(monitorId: string) {
-    return prisma.monitor.findFirst({
+    const monitor = prisma.monitor.findFirst({
       where: { id: monitorId, status: 'PUBLISHED' },
       select: {
         id: true,
@@ -49,10 +49,22 @@ export class PaymentCheckoutRepository implements CreateCheckoutRepository {
           select: {
             id: true,
             teacherPercentage: true,
-            currentPaymentAccount: { select: { walletId: true, status: true, generalStatus: true } },
+            paymentAccounts: {
+              where: { environment: (process.env.ASAAS_ENV ?? 'SANDBOX').toUpperCase() },
+              orderBy: { revision: 'desc' },
+              take: 1,
+              select: { walletId: true, status: true, generalStatus: true },
+            },
             referralReceived: { select: { indicatorTeacherId: true, percentage: true, status: true } },
           },
         },
+      },
+    });
+    return monitor.then((result) => result && {
+      ...result,
+      teacher: {
+        ...result.teacher,
+        currentPaymentAccount: result.teacher.paymentAccounts[0] ?? null,
       },
     });
   }

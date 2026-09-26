@@ -2,13 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { env } from '../config/env.js';
 import { prisma } from '../lib/prisma.js';
 import { createPaymentsModule } from '../modules/payments/payments.module.js';
-import { getAsaasBaseUrl } from '../modules/payments/infrastructure/providers/asaas/asaas.config.js';
+import { getAsaasBaseUrl, selectAsaasApiKey } from '../modules/payments/infrastructure/providers/asaas/asaas.config.js';
 
 if (env.ASAAS_ENV !== 'sandbox') {
   throw new Error('Este script só pode ser executado com ASAAS_ENV=sandbox.');
 }
-if (!env.ASAAS_API_KEY) {
-  throw new Error('Defina ASAAS_API_KEY para gerar o Checkout Sandbox.');
+const asaasApiKey = selectAsaasApiKey('sandbox', { sandbox: env.ASAAS_API_KEY_SANDBOX, production: env.ASAAS_API_KEY });
+if (!asaasApiKey) {
+  throw new Error('Defina ASAAS_API_KEY_SANDBOX para gerar o Checkout Sandbox.');
 }
 
 const monitorIdFromArgument = process.argv[2];
@@ -38,7 +39,7 @@ if (!returnBaseUrl) {
 }
 
 const payments = createPaymentsModule({
-  apiKey: env.ASAAS_API_KEY,
+  apiKey: asaasApiKey,
   baseUrl: getAsaasBaseUrl('sandbox'),
   environment: 'sandbox',
   timeoutMs: env.ASAAS_HTTP_TIMEOUT_MS,
@@ -70,4 +71,3 @@ console.log('Checkout Sandbox criado', {
 });
 
 if (checkout.checkoutUrl) console.log(`\nAbra no navegador:\n${checkout.checkoutUrl}`);
-

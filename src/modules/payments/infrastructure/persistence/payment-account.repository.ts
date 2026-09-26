@@ -25,13 +25,16 @@ export class PaymentAccountRepository {
     private readonly credentialStore: PaymentAccountCredentialStore = new LocalPaymentAccountCredentialStore(),
     private readonly database: typeof prisma = prisma,
   ) {}
-  findCurrentByUserId(userId: string) {
+  async findCurrentByUserId(userId: string, environment = process.env.ASAAS_ENV?.toUpperCase() ?? 'SANDBOX') {
     console.log('Buscando conta de recebimento atual', { event: 'payments.account_lookup_started', userId });
-    return prisma.teacher.findUnique({
+    const teacher = await this.database.teacher.findUnique({
       where: { userId },
       select: {
         id: true,
-        currentPaymentAccount: {
+        paymentAccounts: {
+          where: { environment },
+          orderBy: { revision: 'desc' },
+          take: 1,
           select: {
             id: true,
             providerAccountId: true,
@@ -69,6 +72,9 @@ export class PaymentAccountRepository {
         },
       },
     });
+    if (!teacher) return null;
+    const { paymentAccounts, ...teacherData } = teacher;
+    return { ...teacherData, currentPaymentAccount: paymentAccounts[0] ?? null };
   }
 
   async findCredentialByUserIdAndAccountId(userId: string, accountId: string) {

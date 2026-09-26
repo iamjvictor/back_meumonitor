@@ -37,7 +37,7 @@ import { paymentAccountRoutes } from './modules/payments/http/payment-account.ro
 import { paymentAccountCredentialRoutes } from './modules/payments/http/payment-account-credential.routes.js';
 import { createPaymentsModule } from './modules/payments/payments.module.js';
 import { paymentsRoutes } from './modules/payments/http/payments.routes.js';
-import { getAsaasBaseUrl } from './modules/payments/infrastructure/providers/asaas/asaas.config.js';
+import { getAsaasBaseUrl, selectAsaasApiKey } from './modules/payments/infrastructure/providers/asaas/asaas.config.js';
 import { getWorkerHealth } from './health/worker-health.js';
 import { Redis } from 'ioredis';
 import { EntitlementService } from './modules/access/application/entitlement.service.js';
@@ -81,7 +81,7 @@ await app.register(cors, {
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: corsAllowedHeaders,
 });
-await app.register(rateLimit, { max: 100, timeWindow: '1 minute' });
+await app.register(rateLimit, { max: env.LOAD_TEST_RATE_LIMIT_MAX, timeWindow: '1 minute' });
 
 app.get('/health', async () => ({ status: 'ok' }));
 app.get('/health/worker', async (_request, reply) => {
@@ -141,7 +141,7 @@ await app.register(async (paymentsApp) => paymentAccountRoutes(paymentsApp, paym
 await app.register(async (paymentsApp) => paymentAccountCredentialRoutes(paymentsApp, paymentAccountModule.rotateCredential), { prefix: '/api/v1' });
 if (env.PAYMENTS_PROVIDER === 'ASAAS') {
   const paymentsModule = createPaymentsModule({
-    apiKey: env.ASAAS_API_KEY ?? '',
+    apiKey: selectAsaasApiKey(env.ASAAS_ENV, { sandbox: env.ASAAS_API_KEY_SANDBOX, production: env.ASAAS_API_KEY }) ?? '',
     baseUrl: getAsaasBaseUrl(env.ASAAS_ENV),
     environment: env.ASAAS_ENV,
     timeoutMs: env.ASAAS_HTTP_TIMEOUT_MS,

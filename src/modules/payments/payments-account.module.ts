@@ -1,5 +1,5 @@
 import { env } from '../../config/env.js';
-import { getAsaasBaseUrl } from './infrastructure/providers/asaas/asaas.config.js';
+import { getAsaasBaseUrl, selectAsaasApiKey } from './infrastructure/providers/asaas/asaas.config.js';
 import { AsaasAccountProvider } from './infrastructure/providers/asaas/asaas-account.provider.js';
 import { AsaasHttpClient } from './infrastructure/providers/asaas/asaas-http.client.js';
 import { PaymentAccountRepository } from './infrastructure/persistence/payment-account.repository.js';
@@ -13,7 +13,7 @@ import { createPaymentAccountCredentialResolver } from './application/queries/ge
 import { RotatePaymentAccountCredentialUseCase } from './application/commands/rotate-payment-account-credential.use-case.js';
 
 export function createPaymentAccountModule() {
-  const httpClient = new AsaasHttpClient({ apiKey: env.ASAAS_API_KEY ?? '', baseUrl: getAsaasBaseUrl(env.ASAAS_ENV), environment: env.ASAAS_ENV, timeoutMs: env.ASAAS_HTTP_TIMEOUT_MS });
+  const httpClient = new AsaasHttpClient({ apiKey: selectAsaasApiKey(env.ASAAS_ENV, { sandbox: env.ASAAS_API_KEY_SANDBOX, production: env.ASAAS_API_KEY }) ?? '', baseUrl: getAsaasBaseUrl(env.ASAAS_ENV), environment: env.ASAAS_ENV, timeoutMs: env.ASAAS_HTTP_TIMEOUT_MS });
   const provider = new AsaasAccountProvider(httpClient, {
     webhookUrl: env.ASAAS_WEBHOOK_URL ?? (env.PUBLIC_API_URL ? `${env.PUBLIC_API_URL.replace(/\/$/, '')}/api/v1/payments/webhooks/asaas` : undefined),
     webhookEmail: env.ASAAS_WEBHOOK_EMAIL,

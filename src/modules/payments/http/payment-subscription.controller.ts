@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { AppError } from '../../../core/errors/app-error.js';
 import type { PaymentSubscriptionRepository } from '../infrastructure/persistence/payment-subscription.repository.js';
 import type { PaymentSubscriptionService } from '../application/services/payment-subscription.service.js';
+import { PaymentSubscriptionProviderError, PaymentSubscriptionReconciliationError } from '../application/services/payment-subscription.service.js';
 
 const paramsSchema = z.object({ subscriptionId: z.string().uuid(), monitorId: z.string().uuid() });
 
@@ -47,12 +48,20 @@ export class PaymentSubscriptionController {
     if (!parsed.success) throw new AppError({ code: 'VALIDATION_ERROR', statusCode: 422, publicMessage: 'Assinatura inválida.' });
     const idempotencyKey = request.headers['idempotency-key'];
     if (typeof idempotencyKey !== 'string' || idempotencyKey.trim().length < 8) throw new AppError({ code: 'IDEMPOTENCY_KEY_REQUIRED', statusCode: 422, publicMessage: 'A chave de idempotência é obrigatória.' });
+    console.info('Cancelamento de assinatura solicitado', { event: 'payments.subscription_cancellation_requested', requestId: request.id, studentId, subscriptionId: parsed.data.subscriptionId, monitorId: parsed.data.monitorId });
     try {
       const data = await this.service.cancelItem(studentId, parsed.data.subscriptionId, parsed.data.monitorId, user.id, idempotencyKey.trim());
+      console.info('Cancelamento de assinatura confirmado', { event: 'payments.subscription_cancellation_completed', requestId: request.id, studentId, subscriptionId: parsed.data.subscriptionId, monitorId: parsed.data.monitorId, endsAt: data.endsAt });
       return reply.send({ data });
     } catch (error) {
+      if (error instanceof PaymentSubscriptionProviderError) {
+        throw new AppError({ code: 'PAYMENT_PROVIDER_ERROR', statusCode: 503, publicMessage: 'Não foi possível confirmar o cancelamento com a operadora. Tente novamente em alguns instantes.' });
+      }
+      if (error instanceof PaymentSubscriptionReconciliationError) {
+        throw new AppError({ code: 'CANCELLATION_RECONCILIATION_PENDING', statusCode: 409, publicMessage: 'O cancelamento foi confirmado e está sendo concluído. Atualize a página em alguns instantes.' });
+      }
       const code = error instanceof Error ? error.message : 'INTERNAL_SERVER_ERROR';
-      const status = code === 'SUBSCRIPTION_NOT_FOUND' || code === 'SUBSCRIPTION_ITEM_NOT_FOUND' ? 404 : code === 'SUBSCRIPTION_NOT_ACTIVE' || code === 'IDEMPOTENCY_IN_PROGRESS' ? 409 : code === 'IDEMPOTENCY_KEY_REQUIRED' ? 422 : 500;
+      const status = code === 'SUBSCRIPTION_NOT_FOUND' || code === 'SUBSCRIPTION_ITEM_NOT_FOUND' ? 404 : code === 'SUBSCRIPTION_NOT_ACTIVE' || code === 'IDEMPOTENCY_IN_PROGRESS' || code === 'IDEMPOTENCY_KEY_REUSED' ? 409 : code === 'IDEMPOTENCY_KEY_REQUIRED' ? 422 : 500;
       throw new AppError({ code, statusCode: status, publicMessage: status === 500 ? 'Não foi possível cancelar a assinatura.' : 'Assinatura não disponível para cancelamento.' });
     }
   }

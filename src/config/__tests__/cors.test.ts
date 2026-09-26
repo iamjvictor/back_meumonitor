@@ -9,6 +9,11 @@ test('inclui a origem pública do frontend nas origens CORS permitidas', () => {
   assert.ok(corsOrigins.includes(publicFrontOrigin));
 });
 
+test('permite o domínio público com e sem www', () => {
+  assert.equal(isCorsOriginAllowed('https://meumonitoria.com.br'), true);
+  assert.equal(isCorsOriginAllowed('https://www.meumonitoria.com.br'), true);
+});
+
 test('CORS permite o cabeçalho de bypass do aviso do ngrok', () => {
   assert.ok(corsAllowedHeaders.includes('ngrok-skip-browser-warning'));
 });

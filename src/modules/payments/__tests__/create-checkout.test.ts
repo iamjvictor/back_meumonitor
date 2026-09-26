@@ -38,18 +38,18 @@ test('cria checkout mensal com o preço e a comissão congelados no pedido', asy
   const provider = { async createHostedCheckout(input: any) { command = input; return { providerCheckoutId: 'co_1', checkoutUrl: 'https://sandbox.asaas.com/checkout/co_1', expiresAt: new Date('2026-10-01T00:00:00.000Z') }; } };
   const useCase = new CreateCheckoutUseCase(repository({ createIntent: async ({ monitor: inputMonitor }) => {
     intentMonitorPrice = inputMonitor.priceCents;
-    return { order: { id: 'order_1', subscriptionId: 'subscription_1', status: 'PENDING', amountCents: 1 }, checkout: null, payout: { walletId: 'wallet_teacher', percentage: '50.0000' } };
+    return { order: { id: 'order_1', subscriptionId: 'subscription_1', status: 'PENDING', amountCents: 500 }, checkout: null, payout: { walletId: 'wallet_teacher', percentage: '50.0000' } };
   }, saveCheckout: async (_orderId, checkout) => ({
-    order: { id: 'order_1', subscriptionId: 'subscription_1', status: 'PENDING', amountCents: 1 },
+    order: { id: 'order_1', subscriptionId: 'subscription_1', status: 'PENDING', amountCents: 500 },
     checkout: { checkoutUrl: checkout.checkoutUrl, expiresAt: checkout.expiresAt },
     payout: { walletId: 'wallet_teacher', percentage: '50.0000' },
   }) }), provider);
 
   const result = await useCase.execute('user_1', { monitorId: monitor.id, idempotencyKey: 'key_1', returnBaseUrl: 'http://localhost:3000' });
 
-  assert.equal(intentMonitorPrice, 1);
-  assert.equal(command.amountCents, 1);
-  assert.equal(result.amountCents, 1);
+  assert.equal(intentMonitorPrice, 500);
+  assert.equal(command.amountCents, 500);
+  assert.equal(result.amountCents, 500);
   assert.equal(result.checkoutUrl, 'https://sandbox.asaas.com/checkout/co_1');
   assert.deepEqual(command.splits, [{ walletId: 'wallet_teacher', percentage: '50.0000' }]);
   assert.match(command.successUrl, /orderId=order_1/);
