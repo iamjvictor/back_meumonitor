@@ -89,6 +89,7 @@ const envSchema = z.object({
   QUESTION_CANDIDATE_CONCURRENCY: z.coerce.number().int().positive().max(8).default(3),
   FLASHCARD_GENERATION_CONCURRENCY: z.coerce.number().int().positive().max(8).default(3),
   CORS_ORIGINS: z.string().default(''),
+  LOAD_TEST_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
   PAYMENTS_PROVIDER: z.enum(['SIMULATED', 'ASAAS']).default('SIMULATED'),
   ASAAS_ENV: z.enum(['sandbox', 'production']).default('sandbox'),
   ASAAS_API_KEY: z.string().min(1).optional(),

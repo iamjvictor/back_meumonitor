@@ -47,3 +47,20 @@ test('falha da credencial aborta antes de vincular o professor', async () => {
   assert.equal(calls.includes('teacher.update'), false);
   assert.equal(calls.includes('transaction.rollback'), true);
 });
+
+test('busca a conta atual do ambiente solicitado, sem usar a conta Sandbox apontada pelo professor', async () => {
+  const database = {
+    teacher: {
+      findUnique: async () => ({
+        id: 'teacher-1',
+        currentPaymentAccount: { id: 'sandbox-account', environment: 'SANDBOX' },
+        paymentAccounts: [{ id: 'production-account', environment: 'PRODUCTION' }],
+      }),
+    },
+  };
+  const repository = new PaymentAccountRepository({ decrypt: () => 'secret' } as any, database as any);
+
+  const result = await repository.findCurrentByUserId('user-1', 'PRODUCTION');
+
+  assert.equal(result?.currentPaymentAccount?.id, 'production-account');
+});

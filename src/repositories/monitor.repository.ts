@@ -68,13 +68,18 @@ export class MonitorRepository {
       select: {
         id: true,
         status: true,
-        currentPaymentAccount: { select: { status: true, generalStatus: true } },
+        paymentAccounts: {
+          where: { environment: (process.env.ASAAS_ENV ?? 'SANDBOX').toUpperCase() },
+          orderBy: { revision: 'desc' },
+          take: 1,
+          select: { status: true, generalStatus: true },
+        },
       },
     });
 
     if (!teacher) return { kind: 'TEACHER_NOT_FOUND' as const };
     if (teacher.status !== 'active') return { kind: 'TEACHER_NOT_ACTIVE' as const };
-    if (!isPaymentAccountEligible(teacher.currentPaymentAccount)) {
+    if (!isPaymentAccountEligible(teacher.paymentAccounts[0] ?? null)) {
       return { kind: 'PAYMENT_ACCOUNT_REQUIRED' as const };
     }
 
@@ -477,9 +482,16 @@ export class MonitorRepository {
     if (data.status === 'PUBLISHED' && !monitor.allowPublishWithoutPaymentAccount) {
       const teacher = await prisma.teacher.findUnique({
         where: { id: monitor.teacherId },
-        select: { currentPaymentAccount: { select: { status: true, generalStatus: true } } },
+        select: {
+          paymentAccounts: {
+            where: { environment: (process.env.ASAAS_ENV ?? 'SANDBOX').toUpperCase() },
+            orderBy: { revision: 'desc' },
+            take: 1,
+            select: { status: true, generalStatus: true },
+          },
+        },
       });
-      if (!canPublishMonitor({ allowPublishWithoutPaymentAccount: monitor.allowPublishWithoutPaymentAccount, account: teacher?.currentPaymentAccount ?? null })) {
+      if (!canPublishMonitor({ allowPublishWithoutPaymentAccount: monitor.allowPublishWithoutPaymentAccount, account: teacher?.paymentAccounts[0] ?? null })) {
         throw new MonitorPublicationBlockedError();
       }
     }

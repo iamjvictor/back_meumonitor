@@ -81,7 +81,7 @@ await app.register(cors, {
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: corsAllowedHeaders,
 });
-await app.register(rateLimit, { max: 100, timeWindow: '1 minute' });
+await app.register(rateLimit, { max: env.LOAD_TEST_RATE_LIMIT_MAX, timeWindow: '1 minute' });
 
 app.get('/health', async () => ({ status: 'ok' }));
 app.get('/health/worker', async (_request, reply) => {
