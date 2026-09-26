@@ -35,6 +35,7 @@ dump.rdb
 
 # Ferramentas locais e caches de agentes AI
 .superpowers/
+.worktrees/
 
 # Logs, cobertura e caches
 logs/
@@ -50,5 +51,4 @@ coverage/
 Thumbs.db
 .vscode/
 .idea/
-
 
