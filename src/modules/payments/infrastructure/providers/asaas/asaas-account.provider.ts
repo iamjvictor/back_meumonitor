@@ -1,5 +1,5 @@
 type AsaasAccountRequestClient = {
-  request<T>(path: string, request: { method: 'POST'; body: unknown }): Promise<T>;
+  request<T>(path: string, request: { method: 'GET' | 'POST' | 'PUT'; body?: unknown; credential?: string }): Promise<T>;
 };
 
 export type AsaasAccountProviderOptions = {
@@ -52,6 +52,11 @@ type AsaasSubaccountResponse = {
   webhooks?: Array<{ id?: string }>;
 };
 
+type AsaasWebhook = {
+  id?: string;
+  url?: string;
+};
+
 export type CreatedSubaccount = {
   providerAccountId: string;
   walletId: string;
@@ -88,12 +93,15 @@ export class AsaasAccountProvider {
       body: payload,
     });
 
+    const ensuredWebhook = response.apiKey
+      ? await this.ensureAccountStatusWebhook(response.apiKey)
+      : null;
     const created = {
       providerAccountId: response.id,
       walletId: response.walletId,
       status: normalizeAccountStatus(response.status),
       onboardingUrl: response.onboardingUrl ?? null,
-      webhookId: response.webhooks?.[0]?.id ?? null,
+      webhookId: ensuredWebhook?.webhookId ?? response.webhooks?.[0]?.id ?? null,
     };
     if (response.apiKey) {
       // Keep the transient credential available to the application layer without
@@ -109,6 +117,26 @@ export class AsaasAccountProvider {
       webhookId: created.webhookId,
     });
     return created;
+  }
+
+  async ensureAccountStatusWebhook(credential: string): Promise<{ webhookId: string }> {
+    const webhook = this.buildAccountStatusWebhook();
+    if (!webhook) throw new Error('ASAAS_ACCOUNT_STATUS_WEBHOOK_CONFIGURATION_MISSING');
+
+    const current = await this.client.request<{ data?: AsaasWebhook[] }>('/webhooks?limit=100', {
+      method: 'GET',
+      credential,
+    });
+    const existing = current.data?.find((candidate) => candidate.url === webhook.url && candidate.id);
+    const path = existing?.id ? `/webhooks/${existing.id}` : '/webhooks';
+    const response = await this.client.request<AsaasWebhook>(path, {
+      method: existing?.id ? 'PUT' : 'POST',
+      body: webhook,
+      credential,
+    });
+    const webhookId = response.id ?? existing?.id;
+    if (!webhookId) throw new Error('ASAAS_ACCOUNT_STATUS_WEBHOOK_ID_MISSING');
+    return { webhookId };
   }
 
   private buildAccountStatusWebhook() {

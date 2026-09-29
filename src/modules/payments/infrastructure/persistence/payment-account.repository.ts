@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { CreatedSubaccount } from '../providers/asaas/asaas-account.provider.js';
 import type { CreateSubaccountCommand } from '../providers/asaas/asaas-account.provider.js';
 import { LocalPaymentAccountCredentialStore, type PaymentAccountCredentialStore } from '../credentials/payment-account-credential.store.js';
+import { mapAsaasAccountStatusEvent } from '../providers/asaas/asaas-account-status.mapper.js';
 
 export type PaymentAccountInput = {
   name: string;
@@ -88,6 +89,20 @@ export class PaymentAccountRepository {
 
   async findAccountByUserAndEnvironment(userId: string, environment: string) {
     return this.database.paymentAccount.findFirst({ where: { environment, teacher: { userId } }, select: { id: true, environment: true } });
+  }
+  async findForWebhookSync(accountId: string, environment: string) {
+    return this.database.paymentAccount.findFirst({
+      where: { id: accountId, environment },
+      select: {
+        id: true,
+        environment: true,
+        providerWebhookId: true,
+        credential: { select: { ciphertext: true, nonce: true, authTag: true, keyVersion: true } },
+      },
+    });
+  }
+  async setProviderWebhookId(accountId: string, webhookId: string) {
+    await this.database.paymentAccount.update({ where: { id: accountId }, data: { providerWebhookId: webhookId } });
   }
   async findCredentialOperation(userId: string, environment: string, operation: string, operationKey: string) {
     return this.database.paymentAccountCredentialOperation.findFirst({ where: { teacher: { userId }, environment, operation, operationKey }, select: { result: true } });
@@ -236,19 +251,22 @@ export class PaymentAccountRepository {
 
   async applyAccountStatusEvent(providerAccountId: string, eventType: string, occurredAt = new Date()) {
     const normalized = eventType.toUpperCase();
-    const status = normalized.includes('SUSPEND') ? 'SUSPENDED' : normalized.includes('REJECT') ? 'REJECTED' : normalized.endsWith('APPROVED') ? 'APPROVED' : null;
-    console.log('Atualizando status da conta Asaas', { event: 'payments.account_status_update_started', tableName: 'payment_accounts', providerAccountId, eventType: normalized, derivedStatus: status });
-    if (!status) return null;
+    const mirror = mapAsaasAccountStatusEvent(normalized);
+    console.log('Atualizando status da conta Asaas', { event: 'payments.account_status_update_started', tableName: 'payment_accounts', providerAccountId, eventType: normalized, derivedStatus: mirror?.status ?? null });
+    if (!mirror) return null;
     const result = await prisma.paymentAccount.updateMany({
       where: { providerAccountId },
       data: {
-        status,
-        generalStatus: normalized.includes('GENERAL_APPROVAL') ? status : undefined,
-        verifiedAt: status === 'APPROVED' ? occurredAt : undefined,
+        status: mirror.status,
+        generalStatus: mirror.generalStatus,
+        commercialInfoStatus: mirror.commercialInfoStatus,
+        bankAccountStatus: mirror.bankAccountStatus,
+        documentationStatus: mirror.documentationStatus,
+        verifiedAt: mirror.verified === true ? occurredAt : mirror.verified === false ? null : undefined,
         lastEventAt: occurredAt,
       },
     });
-    console.log('Status da conta Asaas atualizado', { event: 'payments.account_status_update_persisted', tableName: 'payment_accounts', providerAccountId, eventType: normalized, status, updatedRows: result.count });
+    console.log('Status da conta Asaas atualizado', { event: 'payments.account_status_update_persisted', tableName: 'payment_accounts', providerAccountId, eventType: normalized, status: mirror.status ?? null, updatedRows: result.count });
     return result;
   }
 
