@@ -16,6 +16,7 @@ import { PaymentAccountRepository } from './modules/payments/infrastructure/pers
 import { PaymentEventRepository } from './modules/payments/infrastructure/persistence/payment-event.repository.js';
 import { startWorkerHeartbeat } from './health/worker-health.js';
 import { loadQuestionGenerationEnumState } from './worker/services/worker-database-bootstrap.js';
+import { createQueueWorkerOptions } from './worker/worker-options.js';
 
 const questionGenerationEnumState = await loadQuestionGenerationEnumState(() => prisma.$queryRaw<Array<{ hasCorrection: boolean; hasNormalization: boolean }>>`
   SELECT EXISTS (
@@ -57,19 +58,19 @@ const worker = new Worker<DocumentJob>(
     jobId: job.id,
     attempt: job.attemptsMade + 1,
   }),
-  { connection: redisConnection, concurrency: 2 },
+  createQueueWorkerOptions(redisConnection, 2),
 );
 
 const weeklySimulationWorker = new Worker<WeeklySimulationJob>(
   WEEKLY_SIMULATION_QUEUE_NAME,
   async (job) => weeklySimulationWorkerService.process(job.data.simulationId),
-  { connection: redisConnection, concurrency: 2 },
+  createQueueWorkerOptions(redisConnection, 2),
 );
 
 const paymentWebhookWorker = new Worker<PaymentWebhookJob>(
   PAYMENT_WEBHOOK_QUEUE_NAME,
   async (job) => processPaymentWebhookWithAccounts.execute(job.data.eventId),
-  { connection: paymentWebhookQueueConnection, concurrency: 4 },
+  createQueueWorkerOptions(paymentWebhookQueueConnection, 4),
 );
 
 weeklySimulationWorker.on('active', (job) => console.info('[weekly-simulation]', { event: 'weekly_simulation.worker_job_active', jobId: job.id, simulationId: job.data.simulationId }));

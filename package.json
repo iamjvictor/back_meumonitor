@@ -48,6 +48,9 @@
     "asaas:webhook:update": "node --import tsx src/scripts/update-asaas-webhook.ts",
     "asaas:subaccount-webhook:sync": "node --import tsx src/scripts/sync-asaas-subaccount-webhook.ts",
     "asaas:checkout:sandbox": "node --import tsx src/scripts/create-asaas-sandbox-checkout.ts",
+    "payments:reconcile:asaas": "node --import tsx src/scripts/reconcile-asaas-production.ts",
+    "payments:reconcile:asaas-payment": "node --import tsx src/scripts/reconcile-asaas-payment.ts",
+    "payments:process-webhook-event": "node --import tsx src/scripts/process-payment-webhook-event.ts",
     "asaas:webhook:test-payment-created": "node --import tsx src/scripts/test-asaas-payment-created-webhook.ts",
     "payments:backfill": "node --import tsx src/scripts/backfill-payment-subscriptions.ts"
   },

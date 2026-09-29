@@ -111,6 +111,29 @@ test('cancelamento de assinatura é aplicado localmente e não fica aguardando c
   assert.deepEqual(calls, ['processed:SUBSCRIPTION_STATE_APPLIED']);
 });
 
+test('pagamento futuro removido pelo cancelamento atualiza o estado da assinatura', async () => {
+  const calls: string[] = [];
+  const payments = {
+    async applySubscriptionEvent(input: { eventType: string; environment: string }) {
+      assert.equal(input.eventType, 'PAYMENT_DELETED');
+      assert.equal(input.environment, 'PRODUCTION');
+      return { updatedRows: 1 };
+    },
+  } as never;
+  const useCase = new ProcessPaymentWebhookUseCase(repositoryFor({
+    id: 'event_payment_deleted',
+    eventType: 'PAYMENT_DELETED',
+    payload: { payment: { id: 'pay_future', subscription: 'sub_1', deleted: true, dueDate: '2026-10-26' } },
+    createdAt: new Date(),
+    environment: 'PRODUCTION',
+  }, calls), undefined, payments);
+
+  const result = await useCase.execute('event_payment_deleted');
+
+  assert.deepEqual(result, { skipped: false, state: 'SUBSCRIPTION_STATE_APPLIED' });
+  assert.deepEqual(calls, ['processed:SUBSCRIPTION_STATE_APPLIED']);
+});
+
 test('evento de split efetivo é encaminhado para reconciliação financeira', async () => {
   const calls: string[] = [];
   const payments = {

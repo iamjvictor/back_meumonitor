@@ -16,6 +16,7 @@ const WAITING_CORRELATION_EVENTS = new Set([
   'PAYMENT_REFUNDED',
   'PAYMENT_PARTIALLY_REFUNDED',
   'PAYMENT_CHARGEBACK_REQUESTED',
+  'PAYMENT_DELETED',
   'SUBSCRIPTION_CREATED',
   'SUBSCRIPTION_UPDATED',
   'SUBSCRIPTION_DELETED',
@@ -67,7 +68,7 @@ export class ProcessPaymentWebhookUseCase {
         console.log('Evento financeiro processado e acesso confirmado', { event: 'payments.payment_event_processing_completed', eventId: event.id, eventType: event.eventType, chargeId: result.chargeId, studentId: result.studentId, monitorId: result.monitorId, state: 'PAYMENT_ACCESS_APPLIED' });
         return { skipped: false, state: 'PAYMENT_ACCESS_APPLIED' };
       }
-      if (event.eventType === 'SUBSCRIPTION_DELETED' || event.eventType === 'SUBSCRIPTION_UPDATED' || event.eventType === 'PAYMENT_OVERDUE' || event.eventType === 'PAYMENT_REFUNDED' || event.eventType === 'PAYMENT_PARTIALLY_REFUNDED' || event.eventType === 'PAYMENT_CHARGEBACK_REQUESTED') {
+      if (event.eventType === 'SUBSCRIPTION_DELETED' || event.eventType === 'SUBSCRIPTION_UPDATED' || event.eventType === 'PAYMENT_DELETED' || event.eventType === 'PAYMENT_OVERDUE' || event.eventType === 'PAYMENT_REFUNDED' || event.eventType === 'PAYMENT_PARTIALLY_REFUNDED' || event.eventType === 'PAYMENT_CHARGEBACK_REQUESTED') {
         if (!this.payments?.applySubscriptionEvent) {
           await this.repository.markWaitingCorrelation(event.id);
           return { skipped: false, state: 'WAITING_CORRELATION' };

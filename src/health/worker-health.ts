@@ -1,6 +1,6 @@
 export const WORKER_HEARTBEAT_KEY = 'monitor:worker:heartbeat:v1';
-export const WORKER_HEARTBEAT_TTL_SECONDS = 90;
-export const WORKER_HEARTBEAT_INTERVAL_MS = 30_000;
+export const WORKER_HEARTBEAT_TTL_SECONDS = 180;
+export const WORKER_HEARTBEAT_INTERVAL_MS = 60_000;
 
 export type WorkerHealthClient = {
   get(key: string): Promise<string | null>;

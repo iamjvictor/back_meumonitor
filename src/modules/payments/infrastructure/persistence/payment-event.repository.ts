@@ -20,23 +20,31 @@ export class PaymentEventRepository {
     const providerSubscriptionId = readString(subscriptionPayload.id) ?? readString(payload.subscriptionId) ?? readString(paymentPayload.subscription);
     if (!providerSubscriptionId) return { updatedRows: 0 };
 
+    const providerPeriodEnd = input.eventType === 'PAYMENT_DELETED' && paymentPayload.deleted === true
+      ? readDate(paymentPayload.dueDate)
+      : null;
+    if (input.eventType === 'PAYMENT_DELETED' && !providerPeriodEnd) return { updatedRows: 0 };
+
     const subscription = await prisma.paymentSubscription.findFirst({
       where: { environment: input.environment, providerSubscriptionId },
       include: { items: true },
     });
     if (!subscription) return { updatedRows: 0 };
 
-    const end = subscription.currentPeriodEnd;
+    const end = providerPeriodEnd ?? subscription.currentPeriodEnd;
     const isTerminal = input.eventType === 'SUBSCRIPTION_DELETED' || input.eventType === 'PAYMENT_REFUNDED' || input.eventType === 'PAYMENT_CHARGEBACK_REQUESTED';
     const nextStatus = isTerminal ? 'CANCELLED' : input.eventType === 'PAYMENT_OVERDUE' ? 'PAST_DUE' : subscription.status;
     await prisma.$transaction(async (transaction) => {
-      await transaction.paymentSubscription.update({ where: { id: subscription.id }, data: { status: nextStatus, cancelAtPeriodEnd: isTerminal || subscription.cancelAtPeriodEnd, cancelledAt: isTerminal ? input.occurredAt : undefined } });
+      await transaction.paymentSubscription.update({ where: { id: subscription.id }, data: { status: nextStatus, cancelAtPeriodEnd: isTerminal || input.eventType === 'PAYMENT_DELETED' || subscription.cancelAtPeriodEnd, cancelledAt: isTerminal ? input.occurredAt : undefined, currentPeriodEnd: providerPeriodEnd ?? undefined, nextDueDate: providerPeriodEnd ?? undefined } });
       if (isTerminal) {
         await transaction.paymentSubscriptionItem.updateMany({ where: { subscriptionId: subscription.id, status: { in: ['ACTIVE', 'CANCEL_PENDING'] } }, data: { status: 'CANCELLED' } });
         for (const item of subscription.items) {
           await transaction.studentSubscription.updateMany({ where: { paymentSubscriptionItemId: item.id }, data: { status: 'cancelled', cancelAtPeriodEnd: true, cancelledAt: input.occurredAt, expiresAt: end ?? undefined } });
           await transaction.studentEnrollment.updateMany({ where: { paymentSubscriptionItemId: item.id }, data: { status: 'CANCELLED', endsAt: end ?? undefined } });
         }
+      } else if (input.eventType === 'PAYMENT_DELETED') {
+        await transaction.studentSubscription.updateMany({ where: { paymentSubscriptionItemId: { in: subscription.items.map((item) => item.id) } }, data: { status: 'active', cancelAtPeriodEnd: true, expiresAt: end ?? undefined } });
+        await transaction.studentEnrollment.updateMany({ where: { paymentSubscriptionItemId: { in: subscription.items.map((item) => item.id) } }, data: { status: 'ACTIVE', endsAt: end ?? undefined } });
       }
       await transaction.paymentAuditEntry.create({ data: { origin: 'ASAAS_WEBHOOK', reason: input.eventType, studentId: subscription.studentId, after: { providerSubscriptionId, status: nextStatus, eventId: input.eventId } } });
     });
@@ -79,7 +87,8 @@ export class PaymentEventRepository {
     const subscription = order.subscription;
     const subscriptionItem = subscription.items[0]!;
     const valueCents = readMoneyInCents(payment.value) ?? orderItem.priceCentsSnapshot;
-    const periodStart = subscription.currentPeriodStart ?? input.occurredAt;
+    const providerPaymentDate = readDate(payment.clientPaymentDate) ?? readDate(payment.paymentDate) ?? readDate(payment.dateCreated);
+    const periodStart = subscription.currentPeriodStart ?? providerPaymentDate ?? input.occurredAt;
     const periodEnd = subscription.currentPeriodEnd ?? addOneMonth(periodStart);
     const status = input.eventType === 'PAYMENT_RECEIVED' ? 'RECEIVED' : 'CONFIRMED';
     const dueDate = readDate(payment.dueDate);
