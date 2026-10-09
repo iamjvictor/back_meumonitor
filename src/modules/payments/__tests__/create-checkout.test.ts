@@ -53,7 +53,7 @@ test('cria checkout mensal com o preço e a comissão congelados no pedido', asy
   assert.equal(result.checkoutUrl, 'https://sandbox.asaas.com/checkout/co_1');
   assert.deepEqual(command.splits, [{ walletId: 'wallet_teacher', percentage: '50.0000' }]);
   assert.match(command.successUrl, /orderId=order_1/);
-  assert.match(command.successUrl, /\/areadoaluno\?/);
+  assert.match(command.successUrl, /\/checkout\/retorno\?/);
 });
 
 test('permite iniciar nova compra mesmo com assinatura ativa do mesmo monitor', async () => {

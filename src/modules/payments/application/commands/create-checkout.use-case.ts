@@ -97,9 +97,9 @@ export class CreateCheckoutUseCase {
         monitorName: checkoutMonitor.name,
         description: 'Assinatura mensal do monitor',
         amountCents: checkoutMonitor.priceCents,
-        successUrl: `${callbackBase}/areadoaluno?orderId=${intent.order.id}&status=success`,
-        cancelUrl: `${callbackBase}/areadoaluno?orderId=${intent.order.id}&status=cancelled`,
-        expiredUrl: `${callbackBase}/areadoaluno?orderId=${intent.order.id}&status=expired`,
+        successUrl: `${callbackBase}/checkout/retorno?orderId=${intent.order.id}&status=success`,
+        cancelUrl: `${callbackBase}/checkout/retorno?orderId=${intent.order.id}&status=cancelled`,
+        expiredUrl: `${callbackBase}/checkout/retorno?orderId=${intent.order.id}&status=expired`,
         nextDueDate: new Date().toISOString().slice(0, 10),
         splits: intent.payout.walletId && intent.payout.percentage !== '0.0000'
           ? [{ walletId: intent.payout.walletId, percentage: intent.payout.percentage }]

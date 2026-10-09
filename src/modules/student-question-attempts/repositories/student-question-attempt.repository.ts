@@ -1,5 +1,6 @@
 import { prisma } from '../../../lib/prisma.js';
 import type { StudentQuestionAttemptInput } from '../models/student-question-attempt.model.js';
+import { mapQuestionPracticeProvenance } from '../services/question-practice-provenance.js';
 
 function log(event: string, data: Record<string, unknown> = {}) { console.log(event, { event, ...data }); }
 
@@ -53,7 +54,14 @@ export class StudentQuestionAttemptRepository {
           alternatives: true,
           kind: true,
           difficulty: true,
-          questionBankItem: { select: { imageUrls: true } },
+          metadata: true,
+          questionBankItem: { select: {
+            imageUrls: true,
+            board: true,
+            examName: true,
+            examYear: true,
+            sourceUrl: true,
+          } },
           subject: { select: { id: true, name: true } },
           topic: { select: { id: true, name: true } },
           questionAttempts: {
@@ -85,7 +93,10 @@ export class StudentQuestionAttemptRepository {
     ]);
 
     return {
-      questions,
+      questions: questions.map(({ metadata, ...question }) => ({
+        ...question,
+        ...mapQuestionPracticeProvenance({ questionBankItem: question.questionBankItem, metadata }),
+      })),
       total,
       stats: {
         attemptsCount,

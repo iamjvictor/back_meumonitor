@@ -18,6 +18,7 @@ export async function importQuestionBankPages(input: {
   adapter: QuestionBankPageAdapter;
   repository: QuestionBankRepository;
   pageSize?: number;
+  startPage?: number;
   year?: number;
   subjectId?: string;
   maxPages?: number;
@@ -33,7 +34,8 @@ export async function importQuestionBankPages(input: {
     lastPage: 0,
   };
 
-  for (let page = 1; input.maxPages === undefined || page <= input.maxPages; page += 1) {
+  const startPage = input.startPage ?? 1;
+  for (let page = startPage; input.maxPages === undefined || page <= input.maxPages; page += 1) {
     const response = await input.adapter.fetchPage({ page, pageSize, year: input.year, subjectId: input.subjectId });
     result.pagesProcessed += 1;
     result.lastPage = page;

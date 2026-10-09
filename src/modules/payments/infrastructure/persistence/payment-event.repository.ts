@@ -1,5 +1,9 @@
 import { prisma } from '../../../../lib/prisma.js';
 
+export function getStudentEnrollmentStatusForSubscriptionEvent(eventType: string): 'ACTIVE' | 'REMOVED' {
+  return eventType === 'SUBSCRIPTION_DELETED' ? 'REMOVED' : 'ACTIVE';
+}
+
 export type PaymentEventRepositoryResult = {
   updatedRows: number;
   chargeId?: string;
@@ -40,7 +44,7 @@ export class PaymentEventRepository {
         await transaction.paymentSubscriptionItem.updateMany({ where: { subscriptionId: subscription.id, status: { in: ['ACTIVE', 'CANCEL_PENDING'] } }, data: { status: 'CANCELLED' } });
         for (const item of subscription.items) {
           await transaction.studentSubscription.updateMany({ where: { paymentSubscriptionItemId: item.id }, data: { status: 'cancelled', cancelAtPeriodEnd: true, cancelledAt: input.occurredAt, expiresAt: end ?? undefined } });
-          await transaction.studentEnrollment.updateMany({ where: { paymentSubscriptionItemId: item.id }, data: { status: 'CANCELLED', endsAt: end ?? undefined } });
+          await transaction.studentEnrollment.updateMany({ where: { paymentSubscriptionItemId: item.id }, data: { status: getStudentEnrollmentStatusForSubscriptionEvent(input.eventType), endsAt: end ?? undefined } });
         }
       } else if (input.eventType === 'PAYMENT_DELETED') {
         await transaction.studentSubscription.updateMany({ where: { paymentSubscriptionItemId: { in: subscription.items.map((item) => item.id) } }, data: { status: 'active', cancelAtPeriodEnd: true, expiresAt: end ?? undefined } });

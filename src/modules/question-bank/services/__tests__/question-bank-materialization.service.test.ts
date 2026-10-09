@@ -74,7 +74,7 @@ const input = {
 };
 
 test('materializa uma questão válida com rastreabilidade e snapshot', async () => {
-  const { repo, upserts } = repository([item()]);
+  const { repo, upserts } = repository([item({ examName: 'ENEM', examYear: 2008, board: null })]);
   const result = await new QuestionBankMaterializationService(repo).materialize(input);
 
   assert.deepEqual(result, { processed: 1, created: 1, updated: 0, skipped: 0, failures: [] });
@@ -85,7 +85,12 @@ test('materializa uma questão válida com rastreabilidade e snapshot', async ()
   assert.equal(upserts[0]?.topicId, 'topic-1');
   assert.equal(upserts[0]?.subjectId, 'subject-1');
   assert.deepEqual(upserts[0]?.alternatives, [{ label: 'A', text: '3' }, { label: 'B', text: '4' }]);
-  assert.match(JSON.stringify(upserts[0]?.metadata), /subsubtopic/);
+  const metadata = upserts[0]?.metadata as Record<string, unknown>;
+  assert.equal(metadata.board, null);
+  assert.equal(metadata.examName, 'ENEM');
+  assert.equal(metadata.examYear, 2008);
+  assert.deepEqual(metadata.imageUrls, ['https://example.com/image.png']);
+  assert.equal(metadata.questionBankItemId, 'item-1');
 });
 
 test('materializa questões sem subtopic quando a seleção local é Geral', async () => {
@@ -160,6 +165,7 @@ test('retry usa a mesma sourceKey e atualiza a cópia existente', async () => {
   assert.equal(second.updated, 1);
   assert.equal(upserts.length, 2);
   assert.equal(upserts[0]?.sourceKey, upserts[1]?.sourceKey);
+  assert.equal(upserts[0]?.questionBankItemId, upserts[1]?.questionBankItemId);
 });
 
 test('itens iguais podem ser materializados em monitores diferentes', async () => {
@@ -172,6 +178,7 @@ test('itens iguais podem ser materializados em monitores diferentes', async () =
   assert.equal(resultOne.created, 1);
   assert.equal(resultTwo.created, 1);
   assert.notEqual(first.upserts[0]?.sourceKey, second.upserts[0]?.sourceKey);
+  assert.equal(first.upserts[0]?.questionBankItemId, second.upserts[0]?.questionBankItemId);
 });
 
 test('falha de persistência de um item não aprova nem interrompe o lote', async () => {

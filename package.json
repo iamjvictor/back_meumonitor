@@ -37,6 +37,10 @@
     "import:enemhub-math": "node --import tsx src/scripts/import-enemhub-math.ts",
     "import:enemhub-subject": "node --import tsx src/scripts/import-enemhub-math.ts",
     "inspect:questapi-portuguese": "node --import tsx src/scripts/inspect-questapi-portuguese-cesgranrio.ts",
+    "import:questapi-espcex": "node --import tsx src/scripts/import-questapi-espcex.ts",
+    "import:questapi-uerj": "node --import tsx src/scripts/import-questapi-espcex.ts --exam uerj",
+    "import:questapi-fuvest": "node --import tsx src/scripts/import-questapi-espcex.ts --exam fuvest",
+    "import:questapi-cebraspe": "node --import tsx src/scripts/import-questapi-espcex.ts --exam cebraspe",
     "import:questapi-portuguese-grammar": "node --import tsx src/scripts/import-questapi-portuguese-grammar.ts",
     "import:questapi-fgv-portuguese-grammar": "node --import tsx src/scripts/import-questapi-fgv-portuguese-grammar.ts",
     "prisma:generate": "prisma generate",
@@ -52,6 +56,7 @@
     "payments:reconcile:asaas-payment": "node --import tsx src/scripts/reconcile-asaas-payment.ts",
     "payments:process-webhook-event": "node --import tsx src/scripts/process-payment-webhook-event.ts",
     "asaas:webhook:test-payment-created": "node --import tsx src/scripts/test-asaas-payment-created-webhook.ts",
+    "asaas:webhook:test-account-approved": "node --import tsx src/scripts/test-asaas-account-status-webhook.ts",
     "payments:backfill": "node --import tsx src/scripts/backfill-payment-subscriptions.ts"
   },
   "dependencies": {

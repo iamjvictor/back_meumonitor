@@ -4,24 +4,29 @@ export type QuestApiAlternative = {
   imagens?: string[];
 };
 
+export type QuestApiExam = {
+  id?: string | null;
+  orgao?: string | null;
+  cargo?: string | null;
+  ano?: string | number | null;
+  banca?: string | null;
+  alternative_type?: string | null;
+};
+
 export type QuestApiQuestion = {
   id: string;
   numero?: string | null;
   enunciado: string;
   alternativas: QuestApiAlternative[];
   gabarito?: string | null;
-  prova: {
-    id?: string | null;
-    orgao?: string | null;
-    cargo?: string | null;
-    ano?: string | number | null;
-    banca?: string | null;
-    alternative_type?: string | null;
-  };
-  classificacao?: { materia?: string | null } | null;
+  provas?: QuestApiExam[] | null;
+  /** Compatibilidade com respostas antigas da API. */
+  prova?: QuestApiExam | null;
+  classificacao?: { materia?: string | null; assunto?: string | null } | null;
   textos_associados?: string[] | null;
   anexos?: Array<{ url?: string | null } | string> | null;
   sinalizadores?: Record<string, boolean>;
+  dificuldade?: string | null;
 };
 
 export type QuestApiPage = {
@@ -69,7 +74,7 @@ export class QuestApiClient {
     });
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await this.waitForRateLimit();
-      const response = await this.fetchImpl(`${this.baseUrl}/v1/questoes?${params.toString()}`, {
+      const response = await this.fetchImpl(`${this.baseUrl}/v2/questoes?${params.toString()}`, {
         headers: { Accept: 'application/json', 'X-API-Key': this.apiKey },
       });
       this.lastRequestAt = Date.now();

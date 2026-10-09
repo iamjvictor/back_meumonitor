@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const questionBankProviderSchema = z.enum(['ENEMHUB', 'QAPI']);
-export const questionBankExamTypeSchema = z.enum(['ENEM', 'CONCURSO']);
+export const questionBankExamTypeSchema = z.enum(['ENEM', 'CONCURSO', 'MILITAR', 'VESTIBULAR']);
 
 const alternativeSchema = z.object({
   providerId: z.string().trim().min(1).nullable(),

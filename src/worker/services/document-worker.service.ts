@@ -99,6 +99,12 @@ export function shouldProcessDocumentContent(
   return tag === 'KNOWLEDGE_BASE' || tag === 'QUESTIONS' || tag === 'FLASHCARDS';
 }
 
+export function shouldExtractQuestionsForDocument(
+  tag: 'KNOWLEDGE_BASE' | 'QUESTIONS' | 'FLASHCARDS',
+) {
+  return tag === 'QUESTIONS';
+}
+
 export function resolveDocumentStatus(
   failures: Array<{ operation: DocumentProcessingOperation; error: unknown }>,
 ) {
@@ -409,7 +415,7 @@ export class DocumentWorkerService {
           }
         }
 
-        if (document.tag === 'KNOWLEDGE_BASE' || document.tag === 'QUESTIONS') {
+        if (shouldExtractQuestionsForDocument(document.tag)) {
           try {
             const questionResult = await track(
               'EXTRACT_QUESTIONS_TO_PENDING_REVIEW',
@@ -434,6 +440,11 @@ export class DocumentWorkerService {
               error,
             });
           }
+        } else if (document.tag === 'KNOWLEDGE_BASE') {
+          await this.skipOperations(document.id, [
+            'EXTRACT_QUESTIONS_TO_PENDING_REVIEW',
+            'MATCH_ANSWER_KEYS',
+          ], 'document_tag_knowledge_base');
         }
 
         if (document.tag === 'FLASHCARDS') {
